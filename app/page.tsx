@@ -1,8 +1,7 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ArrowLeft,
-  ArrowRight,
   Plus,
   ChevronRight,
   ChevronLeft,
@@ -15,7 +14,6 @@ import {
   MoreHorizontal,
   Sun,
   Moon,
-  Mail,
   Copy,
   LogOut,
   Coffee,
@@ -26,40 +24,28 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import {
-  seedRoom,
-  newRoom,
   aggregate,
   tallyRegion,
   iso,
   addDays,
   labelDate,
-  daysBetween,
   type Room,
-  type Account,
 } from '../lib/meeting';
 type View = 'home' | 'login' | 'create' | 'join' | 'room';
 type Sheet =
   | null
-  | 'email'
   | 'members'
   | 'invite'
   | 'settings'
   | 'link'
   | 'addRegion'
   | 'attendees';
-const KEY = 'when-meet-prototype-v1';
-const today = iso(new Date());
-const hashPin = async (pin: string, nick: string) =>
-  Array.from(
-    new Uint8Array(
-      await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(nick + ':' + pin),
-      ),
-    ),
-  )
-    .map((x) => x.toString(16).padStart(2, '0'))
-    .join('');
+const today = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
 function Avatar({ name, index = 0 }: { name: string; index?: number }) {
   return <span className={'avatar c' + (index % 5)}>{name[0]}</span>;
 }
@@ -76,12 +62,15 @@ function Heading({
     <div className="heading">
       {eyebrow && <span className="eyebrow">{eyebrow}</span>}
       <h1>
-        {title.split('\n').map((s, i) => (
-          <span key={i}>
-            {s}
-            <br />
-          </span>
-        ))}
+        {title
+          .replaceAll('\\n', '\n')
+          .split('\n')
+          .map((s, i) => (
+            <span key={i}>
+              {s}
+              <br />
+            </span>
+          ))}
       </h1>
       {desc && <p>{desc}</p>}
     </div>
@@ -107,8 +96,7 @@ function CTA({
 export default function Home() {
   const [ready, setReady] = useState(false),
     [rooms, setRooms] = useState<Room[]>([]),
-    [accounts, setAccounts] = useState<Account[]>([]),
-    [user, setUser] = useState('양파'),
+    [user, setUser] = useState(''),
     [view, changeView] = useState<View>('home'),
     [active, setActive] = useState('demo');
   const [sheet, changeSheet] = useState<Sheet>(null),
@@ -140,28 +128,98 @@ export default function Home() {
     setError('');
     changeSheet(v);
   }
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      try {
-        const raw = localStorage.getItem(KEY);
-        if (raw) {
-          const d = JSON.parse(raw);
-          setRooms(d.rooms);
-          setAccounts(d.accounts);
-          setUser(d.user || '');
-          if (!d.user) setView('login');
-        } else setRooms([seedRoom(today)]);
-      } catch {
-        setRooms([seedRoom(today)]);
-      }
-      setReady(true);
-    });
-    return () => cancelAnimationFrame(frame);
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false),
+    generation = useRef(0);
+  const api = useCallback(async (payload?: Record<string, unknown>) => {
+    const response = await fetch(
+      '/api/meeting',
+      payload
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        : { cache: 'no-store' },
+    );
+    const data = (await response.json()) as {
+      user: string;
+      rooms: Room[];
+      room: Room;
+      error?: string;
+    };
+    if (!response.ok)
+      throw new Error(data.error || '연결하지 못했어요. 다시 시도해 주세요.');
+    return data;
   }, []);
+  const refresh = useCallback(async () => {
+    const stamp = generation.current;
+    const data = await api();
+    if (pending.current || generation.current !== stamp) return;
+    setUser(data.user);
+    setRooms(data.rooms);
+    if (view === 'room' && !data.rooms.some((r) => r.id === active)) {
+      changeView('home');
+      changeSheet(null);
+      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+    }
+    if (!data.user) changeView('login');
+  }, [api, view, active]);
   useEffect(() => {
-    if (ready)
-      localStorage.setItem(KEY, JSON.stringify({ rooms, accounts, user }));
-  }, [ready, rooms, accounts, user]);
+    let stopped = false;
+    const invite = new URLSearchParams(window.location.search).get('join');
+    api()
+      .then((data) => {
+        if (stopped) return;
+        if (invite) setCode(invite.toUpperCase());
+        setUser(data.user);
+        setRooms(data.rooms);
+        changeView(data.user ? (invite ? 'join' : 'home') : 'login');
+      })
+      .catch((e) => {
+        setError(e.message);
+        changeView('login');
+      })
+      .finally(() => setReady(true));
+    return () => {
+      stopped = true;
+    };
+  }, [api]);
+  useEffect(() => {
+    if (!ready || !user) return;
+    const timer = setInterval(() => {
+      if (!pending.current && document.visibilityState === 'visible')
+        refresh().catch(() =>
+          setToast('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.'),
+        );
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [ready, user, refresh]);
+  async function send(payload: Record<string, unknown>) {
+    if (pending.current) return null;
+    pending.current = true;
+    generation.current++;
+    setBusy(true);
+    setError('');
+    try {
+      const data = await api(payload);
+      if ('room' in data)
+        setRooms((prev) =>
+          data.room
+            ? [...prev.filter((r) => r.id !== data.room.id), data.room]
+            : prev.filter((r) => r.id !== payload.roomId),
+        );
+      return data;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '저장하지 못했어요.';
+      setError(message);
+      setToast(message);
+      return null;
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
   useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(''), 2800);
@@ -190,8 +248,51 @@ export default function Home() {
   const expired = (r: Room) =>
     r.stage === 'closed' ||
     today >= (r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1));
-  const update = (r: Room) =>
-    setRooms((prev) => prev.map((x) => (x.id === r.id ? r : x)));
+  async function update(r: Room) {
+    const old = rooms.find((x) => x.id === r.id);
+    if (!old) return false;
+    let action: Record<string, unknown> | undefined;
+    const different = (a: unknown, b: unknown) =>
+      JSON.stringify(a) !== JSON.stringify(b);
+    if (r.members.length < old.members.length)
+      action = {
+        type: 'remove',
+        member: old.members.find((m) => !r.members.includes(m)),
+      };
+    else if (
+      different(old.responses[user], r.responses[user]) &&
+      old.stage === 'schedule'
+    )
+      action = { type: 'schedule', slots: r.responses[user] || [] };
+    else if (old.date !== r.date)
+      action = { type: 'date', slot: r.date, manual: r.stage === 'confirm' };
+    else if (different(old.confirmations?.[user], r.confirmations?.[user]))
+      action = { type: 'confirm', value: r.confirmations?.[user] };
+    else if (r.round !== old.round) action = { type: 'runoff' };
+    else if (different(old.votes[user], r.votes[user]))
+      action = { type: 'vote', choices: r.votes[user], round: old.round };
+    else if (old.stage === 'tie' && r.stage === 'final')
+      action = { type: 'random' };
+    else if (r.regions.length > old.regions.length)
+      action = { type: 'region', name: r.regions.at(-1) };
+    else if (old.host !== r.host) action = { type: 'transfer', member: r.host };
+    else if (r.stage === 'closed') action = { type: 'close' };
+    else if (r.links.length > old.links.length) {
+      const link = r.links.at(-1)!;
+      action = {
+        type: 'addLink',
+        url: link.url,
+        name: link.name,
+        category: link.category,
+      };
+    } else if (r.links.length < old.links.length)
+      action = {
+        type: 'deleteLink',
+        id: old.links.find((l) => !r.links.some((n) => n.id === l.id))?.id,
+      };
+    if (!action) return true;
+    return Boolean(await send({ ...action, roomId: r.id }));
+  }
   const notify = (s: string) => setToast(s);
   function openRoom(r: Room) {
     setActive(r.id);
@@ -202,70 +303,58 @@ export default function Home() {
     setView('room');
   }
   async function login() {
-    const n = nick.trim();
-    if (!n || !/^\d{4}$/.test(pin))
-      return setError('닉네임과 숫자 4자리 PIN을 입력해 주세요.');
-    if (n === '양파')
-      return setError('양파는 체험용 닉네임이에요. 다른 이름을 골라 주세요.');
-    const hash = await hashPin(pin, n),
-      old = accounts.find((a) => a.name === n);
-    if (old && old.hash !== hash) return setError('PIN이 일치하지 않아요.');
-    if (!old) setAccounts([...accounts, { name: n, hash }]);
-    setUser(n);
+    const data = await send({ type: 'login', name: nick.trim(), pin });
+    if (!data) return;
+    setUser(data.user);
+    setRooms(data.rooms);
     setPin('');
-    setView('home');
+    setView(code ? 'join' : 'home');
   }
-  function create() {
-    if (!name.trim()) return setError('모임 이름을 입력해 주세요.');
-    const count = daysBetween(start, end).length;
-    if (start < today || count < 7 || count > 31)
-      return setError('오늘 이후 날짜로 7~31일을 선택해 주세요.');
-    const r = newRoom(
-      name.trim(),
-      user,
+  async function create() {
+    const data = await send({
+      type: 'create',
+      title: name.trim(),
       start,
       end,
       size,
       mode,
-      crypto.randomUUID(),
-    );
-    setRooms([...rooms, r]);
-    openRoom(r);
-    setName('');
-    notify('모임을 만들었어요. 친구들을 초대해 보세요.');
+    });
+    if (data) {
+      openRoom(data.room);
+      setName('');
+      notify('모임을 만들었어요. 친구들을 초대해 보세요.');
+    }
   }
-  function join() {
-    const r = rooms.find((x) => x.code === code.trim().toUpperCase());
-    if (!r) return setError('이 브라우저에 있는 모임 코드를 확인해 주세요.');
-    if (expired(r)) return setError('종료된 모임이에요.');
-    if (r.members.includes(user)) return openRoom(r);
-    if (r.members.length >= r.size) return setError('정원이 가득 찼어요.');
-    if (r.stage !== 'schedule') return setError('일정 투표가 이미 끝났어요.');
-    const nr = { ...r, members: [...r.members, user] };
-    update(nr);
-    openRoom(nr);
+  async function join() {
+    const data = await send({ type: 'join', code: code.trim().toUpperCase() });
+    if (data) {
+      openRoom(data.room);
+      window.history.replaceState(null, '', '/');
+    }
   }
-  function submit() {
+  async function submit() {
     if (!room) return;
     const r = { ...room, responses: { ...room.responses, [user]: selected } };
     if (Object.keys(r.responses).length === r.size) r.stage = 'date';
-    update(r);
-    setSheet('email');
-    notify('가능한 일정을 제출했어요.');
+    if (await send({ type: 'schedule', roomId: r.id, slots: selected }))
+      notify('가능한 일정을 제출했어요.');
   }
-  function confirmDate(slot: string, manual = false) {
+  async function confirmDate(slot: string, manual = false) {
     if (!room || !host) return;
     const attendees = room.members.filter((m) =>
       room.responses[m]?.includes(slot),
     );
-    update({
-      ...room,
-      date: slot,
-      attendees: manual ? [] : attendees,
-      stage: manual ? 'confirm' : 'region',
-      confirmations: {},
-      votes: {},
-    });
+    if (
+      !(await update({
+        ...room,
+        date: slot,
+        attendees: manual ? [] : attendees,
+        stage: manual ? 'confirm' : 'region',
+        confirmations: {},
+        votes: {},
+      }))
+    )
+      return;
     setRegionVotes([]);
     notify(
       manual
@@ -273,44 +362,22 @@ export default function Home() {
         : '날짜가 정해졌어요! 이제 지역을 골라 주세요.',
     );
   }
-  function demoFill() {
-    if (!room?.demo) return;
-    let r = { ...room };
-    if (r.stage === 'schedule') {
-      r.responses = { ...r.responses };
-      for (const m of r.members)
-        if (m !== user)
-          r.responses[m] = daysBetween(r.start, r.end).flatMap((d) => [
-            d + '|점심',
-            d + '|저녁',
-          ]);
-      if (Object.keys(r.responses).length === r.size) r.stage = 'date';
-    } else if (r.stage === 'region') {
-      r.votes = { ...r.votes };
-      for (const m of r.attendees)
-        if (m !== user) r.votes[m] = [(r.round > 1 ? r.tied! : r.regions)[0]];
-      r = tallyRegion(r);
-    } else if (r.stage === 'confirm') {
-      r.confirmations = Object.fromEntries(r.members.map((m) => [m, true]));
-      r.attendees = [...r.members];
-      r.stage = 'region';
-    }
-    update(r);
-    notify('체험용 친구들의 응답을 채웠어요.');
-  }
-  function removeMember(n: string) {
+  async function removeMember(n: string) {
     if (!room) return;
     const responses = { ...room.responses },
       votes = { ...room.votes };
     delete responses[n];
     delete votes[n];
-    update({
-      ...room,
-      members: room.members.filter((x) => x !== n),
-      attendees: room.attendees.filter((x) => x !== n),
-      responses,
-      votes,
-    });
+    if (
+      !(await update({
+        ...room,
+        members: room.members.filter((x) => x !== n),
+        attendees: room.attendees.filter((x) => x !== n),
+        responses,
+        votes,
+      }))
+    )
+      return;
     if (n === user) {
       setView('home');
       setSheet(null);
@@ -358,14 +425,18 @@ export default function Home() {
           <br />
           우리 약속을 한곳에서.
         </p>
-        <span>모바일 웹 프로토타입</span>
+        <span>함께 정하는 우리 약속</span>
         <small>
-          이 브라우저에만 저장됩니다.
+          친구들과 같은 모임을 공유해요.
           <br />
-          실제 초대·메일은 연결 전입니다.
+          초대 링크로 함께 참여하세요.
         </small>
       </aside>
-      <div className="app-shell">
+      <div
+        className={'app-shell' + (busy ? ' is-saving' : '')}
+        aria-busy={busy}
+      >
+        {busy && <output className="sync-status">저장하고 있어요…</output>}
         <header>
           <button
             className="icon-button"
@@ -539,17 +610,6 @@ export default function Home() {
                 PIN은 찾을 수 없으니 꼭 기억해 주세요.
               </p>
               {error && <p className="error">{error}</p>}
-              <button
-                className="text-button demo-login"
-                onClick={() => {
-                  setUser('양파');
-                  if (!rooms.some((r) => r.demo))
-                    setRooms([...rooms, seedRoom(today)]);
-                  setView('home');
-                }}
-              >
-                먼저 체험해 볼게요 <ArrowRight size={16} />
-              </button>
             </main>
             <CTA onClick={login}>시작하기</CTA>
           </>
@@ -659,13 +719,13 @@ export default function Home() {
                 초대 코드
                 <input
                   value={code}
-                  maxLength={6}
+                  maxLength={12}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="예: MEET05"
+                  placeholder="12자리 초대 코드"
                 />
               </label>
               <p className="helper">
-                로컬 체험에서는 이 브라우저에 있는 모임에만 참가할 수 있어요.
+                친구가 보낸 초대 링크를 열거나 12자리 코드를 입력해 주세요.
               </p>
               {error && <p className="error">{error}</p>}
             </main>
@@ -734,7 +794,7 @@ export default function Home() {
                               <button
                                 key={n}
                                 aria-label={n < 0 ? '이전 달' : '다음 달'}
-                                onClick={() => {
+                                onClick={async () => {
                                   const d = new Date(month + '-01T12:00:00');
                                   d.setMonth(d.getMonth() + n);
                                   setMonth(iso(d).slice(0, 7));
@@ -1001,7 +1061,7 @@ export default function Home() {
                         <button
                           key={String(v)}
                           className={v ? 'primary' : 'secondary'}
-                          onClick={() => {
+                          onClick={async () => {
                             const confirmations = {
                               ...room.confirmations,
                               [user]: v,
@@ -1013,7 +1073,7 @@ export default function Home() {
                               );
                               if (r.attendees.length >= 2) r.stage = 'region';
                             }
-                            update(r);
+                            if (!(await update(r))) return;
                             notify('참석 여부를 제출했어요.');
                           }}
                         >
@@ -1096,13 +1156,16 @@ export default function Home() {
                     {room.attendees.includes(user) ? (
                       <CTA
                         disabled={!regionVotes.length}
-                        onClick={() => {
-                          update(
-                            tallyRegion({
-                              ...room,
-                              votes: { ...room.votes, [user]: regionVotes },
-                            }),
-                          );
+                        onClick={async () => {
+                          if (
+                            !(await update(
+                              tallyRegion({
+                                ...room,
+                                votes: { ...room.votes, [user]: regionVotes },
+                              }),
+                            ))
+                          )
+                            return;
                           notify('지역 투표를 제출했어요.');
                         }}
                       >
@@ -1136,13 +1199,16 @@ export default function Home() {
                       <>
                         <button
                           className="primary"
-                          onClick={() => {
-                            update({
-                              ...room,
-                              stage: 'region',
-                              votes: {},
-                              round: room.round + 1,
-                            });
+                          onClick={async () => {
+                            if (
+                              !(await update({
+                                ...room,
+                                stage: 'region',
+                                votes: {},
+                                round: room.round + 1,
+                              }))
+                            )
+                              return;
                             setRegionVotes([]);
                           }}
                         >
@@ -1150,15 +1216,20 @@ export default function Home() {
                         </button>
                         <button
                           className="secondary full"
-                          onClick={() => {
-                            update({
-                              ...room,
-                              region:
-                                room.tied![
-                                  Math.floor(Math.random() * room.tied!.length)
-                                ],
-                              stage: 'final',
-                            });
+                          onClick={async () => {
+                            if (
+                              !(await update({
+                                ...room,
+                                region:
+                                  room.tied![
+                                    Math.floor(
+                                      Math.random() * room.tied!.length,
+                                    )
+                                  ],
+                                stage: 'final',
+                              }))
+                            )
+                              return;
                             notify('만날 지역이 정해졌어요!');
                           }}
                         >
@@ -1211,7 +1282,7 @@ export default function Home() {
                       className="secondary full"
                       onClick={() =>
                         share(
-                          `${room.title}\n${labelDate(room.date!.split('|')[0])} ${room.date!.split('|')[1]} · ${room.region}\n초대 코드 ${room.code}`,
+                          `${room.title}\n${labelDate(room.date!.split('|')[0])} ${room.date!.split('|')[1]} · ${room.region}\n${window.location.origin}/?join=${room.code}`,
                         )
                       }
                     >
@@ -1297,15 +1368,6 @@ export default function Home() {
                     </p>
                   </main>
                 )}
-                {room.demo &&
-                  ['schedule', 'region', 'confirm'].includes(room.stage) && (
-                    <div className="demo-control">
-                      <span>체험용 모임</span>
-                      <button onClick={demoFill}>
-                        친구들 응답 채우기 <Sparkles size={13} />
-                      </button>
-                    </div>
-                  )}
               </>
             )}
           </>
@@ -1331,50 +1393,6 @@ export default function Home() {
             >
               <X />
             </button>
-            {sheet === 'email' && (
-              <>
-                <div className="sheet-symbol">
-                  <Mail />
-                </div>
-                <h2 id="sheet-title">결과가 나오면 알려드릴까요?</h2>
-                <p>날짜와 지역이 정해질 때 한 번씩 알려드려요.</p>
-                <label className="field">
-                  이메일
-                  <input
-                    type="email"
-                    autoFocus
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="hello@example.com"
-                  />
-                </label>
-                <p className="helper">
-                  체험에서는 신청 상태만 저장해요. 실제 메일은 발송하지 않아요.
-                </p>
-                <button
-                  className="primary"
-                  onClick={() => {
-                    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input))
-                      return setError('이메일 주소를 확인해 주세요.');
-                    if (room)
-                      update({
-                        ...room,
-                        emails: { ...room.emails, [user]: input },
-                      });
-                    setSheet(null);
-                    notify('이메일 신청 상태를 저장했어요.');
-                  }}
-                >
-                  알림 받기
-                </button>
-                <button
-                  className="text-button center"
-                  onClick={() => setSheet(null)}
-                >
-                  다음에 할게요
-                </button>
-              </>
-            )}
             {sheet === 'members' && room && (
               <>
                 <h2 id="sheet-title">함께하는 친구들</h2>
@@ -1419,20 +1437,22 @@ export default function Home() {
                 <p>아래 코드를 친구들에게 알려주세요.</p>
                 <div className="invite-code">{room.code}</div>
                 <p className="helper">
-                  다른 기기에서 참가하는 기능은 서버 연결 후 사용할 수 있어요.
+                  링크를 받은 친구는 닉네임과 PIN으로 참여할 수 있어요.
                 </p>
                 <button
                   className="primary"
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(room.code);
-                      notify('초대 코드를 복사했어요.');
+                      await navigator.clipboard.writeText(
+                        window.location.origin + '/?join=' + room.code,
+                      );
+                      notify('초대 링크를 복사했어요.');
                     } catch {
                       notify('코드를 직접 선택해 복사해 주세요.');
                     }
                   }}
                 >
-                  <Copy size={18} /> 코드 복사하기
+                  <Copy size={18} /> 초대 링크 복사하기
                 </button>
               </>
             )}
@@ -1451,16 +1471,19 @@ export default function Home() {
                 </label>
                 <button
                   className="primary"
-                  onClick={() => {
+                  onClick={async () => {
                     if (!input.trim()) return setError('지역을 입력해 주세요.');
                     if (room.regions.includes(input.trim()))
                       return setError('이미 있는 지역이에요.');
                     if (Object.keys(room.votes).length)
                       return setError('투표가 시작되어 추가할 수 없어요.');
-                    update({
-                      ...room,
-                      regions: [...room.regions, input.trim()],
-                    });
+                    if (
+                      !(await update({
+                        ...room,
+                        regions: [...room.regions, input.trim()],
+                      }))
+                    )
+                      return;
                     setSheet(null);
                   }}
                 >
@@ -1493,7 +1516,7 @@ export default function Home() {
                 <p className="helper">매장명 자동 가져오기는 연결 전이에요.</p>
                 <button
                   className="primary"
-                  onClick={() => {
+                  onClick={async () => {
                     let url;
                     try {
                       url = new URL(input);
@@ -1510,19 +1533,22 @@ export default function Home() {
                       )
                     )
                       return setError('이미 추가한 링크예요.');
-                    update({
-                      ...room,
-                      links: [
-                        ...room.links,
-                        {
-                          id: crypto.randomUUID(),
-                          url: url.href,
-                          name: linkName.trim(),
-                          category,
-                          author: user,
-                        },
-                      ],
-                    });
+                    if (
+                      !(await update({
+                        ...room,
+                        links: [
+                          ...room.links,
+                          {
+                            id: crypto.randomUUID(),
+                            url: url.href,
+                            name: linkName.trim(),
+                            category,
+                            author: user,
+                          },
+                        ],
+                      }))
+                    )
+                      return;
                     setSheet(null);
                     setLinkName('');
                     notify('링크를 추가했어요.');
@@ -1547,14 +1573,6 @@ export default function Home() {
                       친구 초대
                       <ChevronRight />
                     </button>
-                    <button
-                      className="menu-row"
-                      onClick={() => setSheet('email')}
-                    >
-                      <Mail />
-                      이메일 알림 신청
-                      <ChevronRight />
-                    </button>
                     {host && (
                       <>
                         <h3 className="small-heading">친구 관리</h3>
@@ -1566,8 +1584,9 @@ export default function Home() {
                               <b>{m}</b>
                               <button
                                 className="text-button"
-                                onClick={() => {
-                                  update({ ...room, host: m });
+                                onClick={async () => {
+                                  if (!(await update({ ...room, host: m })))
+                                    return;
                                   setSheet(null);
                                   notify(`${m}님에게 방장을 넘겼어요.`);
                                 }}
@@ -1576,13 +1595,13 @@ export default function Home() {
                               </button>
                               <button
                                 className="text-button danger"
-                                onClick={() => {
+                                onClick={async () => {
                                   if (
                                     window.confirm(
                                       `${m}님을 내보내고 표를 삭제할까요?`,
                                     )
                                   )
-                                    removeMember(m);
+                                    await removeMember(m);
                                 }}
                               >
                                 내보내기
@@ -1591,9 +1610,10 @@ export default function Home() {
                           ))}
                         <button
                           className="menu-row danger"
-                          onClick={() => {
+                          onClick={async () => {
                             if (window.confirm('모임을 종료할까요?')) {
-                              update({ ...room, stage: 'closed' });
+                              if (!(await update({ ...room, stage: 'closed' })))
+                                return;
                               setSheet(null);
                               setView('home');
                             }
@@ -1607,13 +1627,13 @@ export default function Home() {
                     {!host && (
                       <button
                         className="menu-row danger"
-                        onClick={() => {
+                        onClick={async () => {
                           if (
                             window.confirm(
                               '모임에서 나갈까요? 제출한 표는 삭제돼요.',
                             )
                           )
-                            removeMember(user);
+                            await removeMember(user);
                         }}
                       >
                         <LogOut />
@@ -1626,7 +1646,9 @@ export default function Home() {
                     <p>{user}님으로 이용 중이에요.</p>
                     <button
                       className="menu-row"
-                      onClick={() => {
+                      onClick={async () => {
+                        if (!(await send({ type: 'logout' }))) return;
+                        setRooms([]);
                         setUser('');
                         setView('login');
                         setSheet(null);
@@ -1634,22 +1656,6 @@ export default function Home() {
                     >
                       <LogOut />
                       다른 닉네임으로 들어가기
-                    </button>
-                    <button
-                      className="menu-row"
-                      onClick={() => {
-                        setRooms((prev) => [
-                          seedRoom(today),
-                          ...prev.filter((x) => !x.demo),
-                        ]);
-                        setUser('양파');
-                        setSheet(null);
-                        setView('home');
-                        notify('샘플 모임을 처음으로 되돌렸어요.');
-                      }}
-                    >
-                      <Sparkles />
-                      샘플 모임 다시 체험하기
                     </button>
                   </>
                 )}

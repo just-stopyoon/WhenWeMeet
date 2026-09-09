@@ -1397,3 +1397,6 @@ dialog.sheet::backdrop {
   background: #111d2c66;
   backdrop-filter: blur(3px);
 }
+
+.is-saving button { pointer-events: none; opacity: .65; }
+.sync-status { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); padding: 10px 20px; background: #191f28; color: white; border-radius: 20px; z-index: 100; }
