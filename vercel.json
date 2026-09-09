@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "node --version",
+  "buildCommand": "node scripts/build-vercel.mjs",
+  "outputDirectory": ".vercel-static",
+  "rewrites": [{ "source": "/:path*", "destination": "/api/gateway?path=:path*" }]
+}
