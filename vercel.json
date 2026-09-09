@@ -6,6 +6,6 @@
   "outputDirectory": ".vercel-static",
   "rewrites": [
     { "source": "/", "destination": "/api/gateway?path=/" },
-    { "source": "/:path+", "destination": "/api/gateway?path=:path+" }
+    { "source": "/:path*", "destination": "/api/gateway?path=:path*" }
   ]
 }
