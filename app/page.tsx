@@ -1138,8 +1138,7 @@ export default function Home() {
                           ),
                         )}
                       </div>
-                      {Object.keys(room.votes).length === 0 &&
-                        room.round === 1 && (
+                      {room.round === 1 && (
                           <button
                             className="add-region"
                             onClick={() => setSheet('addRegion')}
@@ -1149,8 +1148,9 @@ export default function Home() {
                         )}
                       <p className="helper">
                         {Object.keys(room.votes).length} /{' '}
-                        {room.attendees.length}명 제출 · 첫 투표 후에는 지역을
-                        추가할 수 없어요.
+                        {room.attendees.length}명 제출 · {room.round === 1
+                          ? '마감 전까지 후보를 추가하고 투표를 수정할 수 있어요.'
+                          : '동점인 후보 중 하나를 골라 주세요.'}
                       </p>
                     </main>
                     {room.attendees.includes(user) ? (
@@ -1475,8 +1475,8 @@ export default function Home() {
                     if (!input.trim()) return setError('지역을 입력해 주세요.');
                     if (room.regions.includes(input.trim()))
                       return setError('이미 있는 지역이에요.');
-                    if (Object.keys(room.votes).length)
-                      return setError('투표가 시작되어 추가할 수 없어요.');
+                    if (room.stage !== 'region' || room.round !== 1)
+                      return setError('1차 지역 투표가 마감되어 추가할 수 없어요.');
                     if (
                       !(await update({
                         ...room,

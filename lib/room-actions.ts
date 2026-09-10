@@ -105,13 +105,14 @@ export function applyAction(source: Room, user: string, a: Action): Room {
     }
     case 'region':
       requireThat(
-        r.stage === 'region' && r.round === 1 && !Object.keys(r.votes).length,
+        r.stage === 'region' && r.round === 1,
+        '1차 지역 투표가 마감되기 전까지만 후보를 추가할 수 있어요.',
       );
       requireThat(
         typeof a.name === 'string' &&
           a.name.trim().length > 0 &&
           a.name.length <= 25 &&
-          !r.regions.includes(a.name),
+          !r.regions.includes(a.name.trim()),
       );
       r.regions.push((a.name as string).trim());
       break;
