@@ -8,6 +8,39 @@ var safeReferrer = '';
 try { safeReferrer = document.referrer ? new URL(document.referrer).origin + '/' : ''; } catch (_) {}
 gtag('set', {page_location: window.location.origin + '/', page_referrer: safeReferrer, page_title: '언제 만날래'});
 gtag('config', 'G-R553VVDCZ4', {allow_google_signals: false, allow_ad_personalization_signals: false});
+(function () {
+  if (!window.fetch || window.__whenMeetEventsInstalled) return;
+  window.__whenMeetEventsInstalled = true;
+  var originalFetch = window.fetch;
+  window.fetch = function (input, init) {
+    var action = null;
+    try {
+      var url = new URL(typeof input === 'string' ? input : input.url, window.location.origin);
+      if (url.origin === window.location.origin && url.pathname === '/api/meeting' &&
+          init && String(init.method).toUpperCase() === 'POST' && typeof init.body === 'string') {
+        // Retain only the action type, never the PIN, nickname, invite code or submitted content.
+        action = JSON.parse(init.body).type;
+      }
+    } catch (_) {}
+    var result = originalFetch.apply(this, arguments);
+    if (action) result.then(function (response) {
+      if (!response.ok) return;
+      return response.clone().json().then(function (data) {
+        if (data.error || !data.room) return;
+        var names = {
+          create: 'meeting_created', join: 'meeting_joined',
+          schedule: 'availability_submitted', date: 'meeting_date_confirmed',
+          vote: 'region_vote_submitted', addLink: 'place_link_added'
+        };
+        if (Object.prototype.hasOwnProperty.call(names, action)) gtag('event', names[action]);
+        if ((action === 'vote' || action === 'random') && data.room.stage === 'final') {
+          gtag('event', 'meeting_location_confirmed');
+        }
+      });
+    }).catch(function () { /* Analytics must never affect the app request. */ });
+    return result;
+  };
+})();
 </script>`;
 
 export async function proxy(request) {
