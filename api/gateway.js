@@ -1,4 +1,14 @@
 const upstreamOrigin = 'https://when-we-meet-yangpa.stopjung1025.chatgpt.site';
+const analyticsTag = `<script async src="https://www.googletagmanager.com/gtag/js?id=G-R553VVDCZ4"></script>
+<script id="when-meet-analytics">
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+var safeReferrer = '';
+try { safeReferrer = document.referrer ? new URL(document.referrer).origin + '/' : ''; } catch (_) {}
+gtag('set', {page_location: window.location.origin + '/', page_referrer: safeReferrer, page_title: '언제 만날래'});
+gtag('config', 'G-R553VVDCZ4', {allow_google_signals: false, allow_ad_personalization_signals: false});
+</script>`;
 
 export async function proxy(request) {
   const incoming = new URL(request.url);
@@ -41,6 +51,11 @@ export async function proxy(request) {
     });
     for (const cookie of response.headers.getSetCookie()) {
       if (cookie.startsWith('wwm_session=')) outgoing.append('Set-Cookie', cookie);
+    }
+    if (request.method === 'GET' && upstream.pathname === '/' && response.ok && outgoing.get('Content-Type').includes('text/html')) {
+      const html = await response.text();
+      const tagged = html.includes('id="when-meet-analytics"') ? html : html.replace('</head>', analyticsTag + '</head>');
+      return new Response(tagged, { status: response.status, headers: outgoing });
     }
     return new Response(request.method === 'HEAD' ? null : response.body, { status: response.status, headers: outgoing });
   } catch {
