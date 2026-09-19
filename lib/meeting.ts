@@ -34,6 +34,7 @@ export type Room = {
   regions: string[];
   votes: Record<string, string[]>;
   round: number;
+  regionRevision?: number;
   attendees: string[];
   date?: string;
   region?: string;

@@ -279,6 +279,10 @@ export default function Home() {
   const room = rooms.find((r) => r.id === active),
     host = room?.host === user;
   const showScheduleResults = !!room && user in room.responses && !editingSchedule;
+  useEffect(() => {
+    setRegionVotes([]);
+    changeSheet(null);
+  }, [room?.id, room?.regionRevision]);
   const expired = (r: Room) =>
     r.stage === 'closed' ||
     today >= (r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1));
@@ -304,7 +308,7 @@ export default function Home() {
       action = { type: 'confirm', value: r.confirmations?.[user] };
     else if (r.round !== old.round) action = { type: 'runoff' };
     else if (different(old.votes[user], r.votes[user]))
-      action = { type: 'vote', choices: r.votes[user], round: old.round };
+      action = { type: 'vote', choices: r.votes[user], round: old.round, regionRevision: old.regionRevision ?? 0 };
     else if (old.stage === 'tie' && r.stage === 'final')
       action = { type: 'random' };
     else if (r.regions.length > old.regions.length)
@@ -796,7 +800,12 @@ export default function Home() {
                     return (
                       <div key={s} className={idx >= i ? 'on' : ''}>
                         <span>{idx > i ? <Check size={12} /> : i + 1}</span>
-                        {s}
+                        {i === 0 && host && ['region', 'tie'].includes(room.stage) ? (
+                          <button className="change-date-button" disabled={busy} onClick={async () => {
+                            if (!window.confirm('날짜를 다시 선택할까요? 기존 가능 일정과 지역 후보는 유지되고, 지역 투표는 초기화돼요.')) return;
+                            if (await send({ type: 'reopenDate', roomId: room.id })) notify('모두 날짜를 다시 선택하는 단계로 돌아갔어요.');
+                          }}>일정 변경하기</button>
+                        ) : s}
                         {i < 2 && <i />}
                       </div>
                     );

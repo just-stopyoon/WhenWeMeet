@@ -89,7 +89,8 @@ export function applyAction(source: Room, user: string, a: Action): Room {
       requireThat(
         r.stage === 'region' &&
           r.attendees.includes(user) &&
-          a.round === r.round,
+          a.round === r.round &&
+          (a.regionRevision ?? 0) === (r.regionRevision ?? 0),
         '마감되었거나 지난 회차의 투표예요. 새로 확인해 주세요.',
       );
       const choices = r.round > 1 ? r.tied! : r.regions;
@@ -103,6 +104,19 @@ export function applyAction(source: Room, user: string, a: Action): Room {
       r.votes[user] = a.choices as string[];
       return tallyRegion(r);
     }
+    case 'reopenDate':
+      host();
+      requireThat(r.stage === 'region' || r.stage === 'tie');
+      r.stage = 'date';
+      delete r.date;
+      delete r.region;
+      delete r.tied;
+      r.attendees = [];
+      r.confirmations = {};
+      r.votes = {};
+      r.round = 1;
+      r.regionRevision = (r.regionRevision ?? 0) + 1;
+      break;
     case 'region':
       requireThat(
         r.stage === 'region' && r.round === 1,
