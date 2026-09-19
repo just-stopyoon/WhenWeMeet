@@ -811,6 +811,13 @@ export default function Home() {
                     );
                   })}
                 </div>
+                {['region', 'tie', 'final'].includes(room.stage) && (
+                  <section className="meeting-attendees" aria-label="이번 약속 참석자">
+                    <strong>이번 약속 참석자 · {room.attendees.length}명</strong>
+                    <p>{room.attendees.length ? room.attendees.join(', ') : '참석 가능한 사람이 없어요.'}</p>
+                    {!room.attendees.includes(user) && <p className="spectator-notice">선택된 날짜·시간에 참석하지 않는 것으로 되어 있어요. 현재 관전 중이며 지역 투표에는 참여할 수 없어요.</p>}
+                  </section>
+                )}
                 {room.stage === 'schedule' && (
                   <>
                     <main>
@@ -1167,7 +1174,9 @@ export default function Home() {
                       <Heading
                         title="어디에서 만날까요?"
                         desc={
-                          room.round > 1
+                          !room.attendees.includes(user)
+                            ? '참석하는 친구들이 지역을 고르고 있어요.'
+                            : room.round > 1
                             ? '동률인 지역 중 한 곳을 골라 주세요.'
                             : '마음 가는 지역을 최대 2곳 골라 주세요.'
                         }
@@ -1175,7 +1184,7 @@ export default function Home() {
                       <div className="section-head">
                         <span>선호 지역</span>
                         <b className="blue-text">
-                          {regionVotes.length} / {room.round > 1 ? 1 : 2}개
+                          {room.attendees.includes(user) ? `${regionVotes.length} / ${room.round > 1 ? 1 : 2}개` : '관전 중'}
                         </b>
                       </div>
                       <div className="regions">
@@ -1183,9 +1192,10 @@ export default function Home() {
                           (r) => (
                             <button
                               key={r}
-                              aria-pressed={regionVotes.includes(r)}
+                              disabled={!room.attendees.includes(user)}
+                              aria-pressed={room.attendees.includes(user) && regionVotes.includes(r)}
                               className={
-                                regionVotes.includes(r) ? 'selected' : ''
+                                room.attendees.includes(user) && regionVotes.includes(r) ? 'selected' : ''
                               }
                               onClick={() =>
                                 setRegionVotes(
@@ -1200,7 +1210,7 @@ export default function Home() {
                             >
                               <MapPin size={19} />
                               <b>{r}</b>
-                              {regionVotes.includes(r) && <Check size={15} />}
+                              {room.attendees.includes(user) && regionVotes.includes(r) && <Check size={15} />}
                             </button>
                           ),
                         )}

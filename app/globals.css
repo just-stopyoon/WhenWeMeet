@@ -921,6 +921,10 @@ input[type='date']:focus {
   gap: 9px;
   margin-top: 10px;
 }
+.meeting-attendees { margin: 16px 24px 0; padding: 16px; background: #f2f6fc; border-radius: 14px; font-size: 14px; }
+.meeting-attendees p { margin-top: 8px; line-height: 1.6; overflow-wrap: anywhere; }
+.meeting-attendees .spectator-notice { color: #4e5968; font-size: 13px; }
+.regions button:disabled { cursor: default; opacity: 0.65; }
 .change-date-button { color: var(--blue); font: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 8px 0; }
 .candidate-availability { display: flex; align-items: center; position: relative; }
 .availability-help { display: flex; }
