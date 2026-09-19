@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import {
   ArrowLeft,
   Plus,
@@ -22,6 +22,7 @@ import {
   PartyPopper,
   Heart,
   CheckCheck,
+  CircleHelp,
 } from 'lucide-react';
 import {
   aggregate,
@@ -48,6 +49,37 @@ const today = new Intl.DateTimeFormat('en-CA', {
 }).format(new Date());
 function Avatar({ name, index = 0 }: { name: string; index?: number }) {
   return <span className={'avatar c' + (index % 5)}>{name[0]}</span>;
+}
+function AvailabilityHelp({ room, date }: { room: Room; date: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+  return <div className="availability-help" ref={ref}>
+    <button type="button" className="availability-help-trigger" aria-label={`${labelDate(date)} 가능한 친구 보기`} aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
+      <CircleHelp size={18} aria-hidden="true" />
+    </button>
+    {open && <div id={id} className="availability-bubble" role="region" aria-label="시간대별 가능한 친구">
+      {['점심', '저녁'].map(slot => {
+        const people = room.members.filter(member => room.responses[member]?.includes(date + '|' + slot));
+        return <div key={slot}><strong>{slot} · {people.length}명 가능</strong><p>{people.length ? people.join(', ') : '가능한 친구가 없어요.'}</p></div>;
+      })}
+    </div>}
+  </div>;
 }
 function Heading({
   title,
@@ -1011,10 +1043,13 @@ export default function Home() {
                               </div>
                               <div>
                                 <b>{labelDate(d)}</b>
+                                <div className="candidate-availability">
                                 <p>
                                   {Math.max(...candidates.map((c) => c.count))}
                                   명 가능 {i === 0 ? '· 가장 이른 날' : ''}
                                 </p>
+                                <AvailabilityHelp room={room} date={d} />
+                                </div>
                                 <div className="candidate-slots">
                                   {candidates.map((c) => (
                                     <button

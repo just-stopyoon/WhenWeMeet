@@ -921,6 +921,14 @@ input[type='date']:focus {
   gap: 9px;
   margin-top: 10px;
 }
+.candidate-availability { display: flex; align-items: center; position: relative; }
+.availability-help { display: flex; }
+.availability-help-trigger { width: 36px; height: 36px; display: grid; place-items: center; color: #6b7684; }
+.availability-help-trigger:focus-visible { outline: 2px solid var(--blue); border-radius: 50%; }
+.availability-bubble { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; width: min(260px, 100%); padding: 16px; border: 1px solid #e5e8eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 24px #191f2826; font-size: 13px; }
+.availability-bubble::before { content: ''; position: absolute; top: -6px; left: 28px; width: 10px; height: 10px; transform: rotate(45deg); background: white; border-top: 1px solid #e5e8eb; border-left: 1px solid #e5e8eb; }
+.availability-bubble > div + div { margin-top: 14px; }
+.date-candidate .availability-bubble p { color: #4e5968; line-height: 1.6; overflow-wrap: anywhere; }
 .candidate-slots button {
   display: flex;
   align-items: center;
