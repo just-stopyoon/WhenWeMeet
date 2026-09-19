@@ -683,6 +683,11 @@ input[type='date']:focus {
   justify-content: center;
   margin-top: 6px;
 }
+.heat-count { display: block; margin-top: 3px; font-size: 11px; }
+.schedule-results { margin-top: 20px; padding: 20px; border-radius: 18px; background: #f7f8fa; }
+.schedule-results > div { margin-top: 16px; }
+.schedule-results h4 { font-size: 15px; margin-bottom: 6px; }
+.schedule-results p { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .dots i {
   width: 4px;
   height: 4px;
