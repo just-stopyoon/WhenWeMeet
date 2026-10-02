@@ -24,14 +24,17 @@ import {
   CheckCheck,
   CircleHelp,
 } from 'lucide-react';
+import { iso, addDays, labelDate, type Room } from '../lib/meeting';
 import {
-  aggregate,
-  tallyRegion,
-  iso,
-  addDays,
-  labelDate,
-  type Room,
-} from '../lib/meeting';
+  dateCandidateView,
+  isSelectableDate,
+  reconcileRegionVoteDraft,
+  regionVoteContext,
+  regionVoteOptions,
+  validRegionVote,
+  type RegionVoteDraft,
+} from '../lib/meeting-view';
+import { useKoreanToday } from '../hooks/use-korean-today';
 type View = 'home' | 'login' | 'create' | 'join' | 'room';
 type Sheet =
   | null
@@ -41,12 +44,6 @@ type Sheet =
   | 'link'
   | 'addRegion'
   | 'attendees';
-const today = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Seoul',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-}).format(new Date());
 function Avatar({ name, index = 0 }: { name: string; index?: number }) {
   return <span className={'avatar c' + (index % 5)}>{name[0]}</span>;
 }
@@ -73,12 +70,12 @@ function AvailabilityHelp({ room, date }: { room: Room; date: string }) {
     <button type="button" className="availability-help-trigger" aria-label={`${labelDate(date)} 가능한 친구 보기`} aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
       <CircleHelp size={18} aria-hidden="true" />
     </button>
-    {open && <div id={id} className="availability-bubble" role="region" aria-label="시간대별 가능한 친구">
+    {open && <section id={id} className="availability-bubble" aria-label="시간대별 가능한 친구">
       {['점심', '저녁'].map(slot => {
         const people = room.members.filter(member => room.responses[member]?.includes(date + '|' + slot));
         return <div key={slot}><strong>{slot} · {people.length}명 가능</strong><p>{people.length ? people.join(', ') : '가능한 친구가 없어요.'}</p></div>;
       })}
-    </div>}
+    </section>}
   </div>;
 }
 function Heading({
@@ -126,6 +123,7 @@ function CTA({
   );
 }
 export default function Home() {
+  const today = useKoreanToday();
   const [ready, setReady] = useState(false),
     [rooms, setRooms] = useState<Room[]>([]),
     [user, setUser] = useState(''),
@@ -146,8 +144,13 @@ export default function Home() {
   const [chosen, setChosen] = useState(today),
     [month, setMonth] = useState(today.slice(0, 7)),
     [selected, setSelected] = useState<string[]>([]),
-    [regionVotes, setRegionVotes] = useState<string[]>([]),
+    [regionDraft, setRegionDraft] = useState<RegionVoteDraft>({
+      context: '',
+      choices: [],
+    }),
     [customDate, setCustomDate] = useState('');
+  const [expandedDateContext, setExpandedDateContext] = useState('');
+  const [previousRoomContext, setPreviousRoomContext] = useState('');
   const [category, setCategory] = useState<'food' | 'cafe'>('food'),
     [linkName, setLinkName] = useState('');
   const [editingSchedule, setEditingSchedule] = useState(false);
@@ -279,10 +282,25 @@ export default function Home() {
   const room = rooms.find((r) => r.id === active),
     host = room?.host === user;
   const showScheduleResults = !!room && user in room.responses && !editingSchedule;
-  useEffect(() => {
-    setRegionVotes([]);
+  const nextRegionDraft = room
+    ? reconcileRegionVoteDraft(regionDraft, room, user)
+    : regionDraft;
+  const regionVotes = room ? nextRegionDraft.choices : [];
+  const roomContext = JSON.stringify([room?.id, room?.regionRevision ?? 0]);
+  const dateContext = JSON.stringify([roomContext, today]);
+  const dateCandidates = room
+    ? dateCandidateView(room, today, expandedDateContext === dateContext)
+    : null;
+  if (nextRegionDraft !== regionDraft) setRegionDraft(nextRegionDraft);
+  if (roomContext !== previousRoomContext) {
+    setPreviousRoomContext(roomContext);
     changeSheet(null);
-  }, [room?.id, room?.regionRevision]);
+    setCustomDate('');
+    setExpandedDateContext('');
+  }
+  function setRegionVotes(choices: string[]) {
+    if (room) setRegionDraft({ context: regionVoteContext(room, user), choices });
+  }
   const expired = (r: Room) =>
     r.stage === 'closed' ||
     today >= (r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1));
@@ -304,11 +322,7 @@ export default function Home() {
       action = { type: 'schedule', slots: r.responses[user] || [] };
     else if (old.date !== r.date)
       action = { type: 'date', slot: r.date, manual: r.stage === 'confirm' };
-    else if (different(old.confirmations?.[user], r.confirmations?.[user]))
-      action = { type: 'confirm', value: r.confirmations?.[user] };
     else if (r.round !== old.round) action = { type: 'runoff' };
-    else if (different(old.votes[user], r.votes[user]))
-      action = { type: 'vote', choices: r.votes[user], round: old.round, regionRevision: old.regionRevision ?? 0 };
     else if (old.stage === 'tie' && r.stage === 'final')
       action = { type: 'random' };
     else if (r.regions.length > old.regions.length)
@@ -336,7 +350,10 @@ export default function Home() {
     setEditingSchedule(false);
     setActive(r.id);
     setSelected(r.responses[user] || []);
-    setRegionVotes(r.votes[user] || []);
+    setRegionDraft(
+      reconcileRegionVoteDraft({ context: '', choices: [] }, r, user),
+    );
+    setExpandedDateContext('');
     setChosen(r.start < today ? today : r.start);
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
@@ -402,6 +419,17 @@ export default function Home() {
         ? '참석 여부를 다시 확인해 주세요.'
         : '날짜가 정해졌어요! 이제 지역을 골라 주세요.',
     );
+  }
+  async function reopenDate() {
+    if (!room || !host) return;
+    if (
+      !window.confirm(
+        '날짜를 다시 선택할까요? 기존 가능 일정과 지역 후보는 유지되고, 참석 확인과 지역 투표는 초기화돼요.',
+      )
+    )
+      return;
+    if (await send({ type: 'reopenDate', roomId: room.id }))
+      notify('날짜를 다시 선택해 주세요.');
   }
   async function removeMember(n: string) {
     if (!room) return;
@@ -536,7 +564,7 @@ export default function Home() {
                 </div>
                 <div className="calendar-art">
                   <div>LET’S MEET</div>
-                  <b>{new Date().getDate()}</b>
+                  <b>{Number(today.slice(8))}</b>
                   <span className="art-check">
                     <Check size={19} />
                   </span>
@@ -801,10 +829,13 @@ export default function Home() {
                       <div key={s} className={idx >= i ? 'on' : ''}>
                         <span>{idx > i ? <Check size={12} /> : i + 1}</span>
                         {i === 0 && host && ['region', 'tie'].includes(room.stage) ? (
-                          <button className="change-date-button" disabled={busy} onClick={async () => {
-                            if (!window.confirm('날짜를 다시 선택할까요? 기존 가능 일정과 지역 후보는 유지되고, 지역 투표는 초기화돼요.')) return;
-                            if (await send({ type: 'reopenDate', roomId: room.id })) notify('모두 날짜를 다시 선택하는 단계로 돌아갔어요.');
-                          }}>일정 변경하기</button>
+                          <button
+                            className="change-date-button"
+                            disabled={busy}
+                            onClick={reopenDate}
+                          >
+                            일정 변경하기
+                          </button>
                         ) : s}
                         {i < 2 && <i />}
                       </div>
@@ -954,6 +985,7 @@ export default function Home() {
                             return (
                               <button
                                 key={s}
+                                disabled={!isSelectableDate(room, chosen, today)}
                                 aria-pressed={yes}
                                 className={yes ? 'active' : ''}
                                 onClick={() =>
@@ -1030,9 +1062,9 @@ export default function Home() {
                     </div>
                     <Heading
                       title={
-                        aggregate(room).length
+                        dateCandidates!.slots.length
                           ? '함께할 수 있는 날을\n찾았어요!'
-                          : '아직 모두 가능한\n날짜가 없어요'
+                          : '남은 기간에 조건에 맞는\n날짜가 없어요'
                       }
                       desc={
                         host
@@ -1041,14 +1073,8 @@ export default function Home() {
                       }
                     />
                     <div className="candidate-list">
-                      {Array.from(
-                        new Set(
-                          aggregate(room).map((c) => c.slot.split('|')[0]),
-                        ),
-                      )
-                        .slice(0, 7)
-                        .map((d, i) => {
-                          const candidates = aggregate(room).filter((c) =>
+                      {dateCandidates!.dates.map((d) => {
+                          const candidates = dateCandidates!.slots.filter((c) =>
                             c.slot.startsWith(d),
                           );
                           return (
@@ -1062,7 +1088,7 @@ export default function Home() {
                                 <div className="candidate-availability">
                                 <p>
                                   {Math.max(...candidates.map((c) => c.count))}
-                                  명 가능 {i === 0 ? '· 가장 이른 날' : ''}
+                                  명 가능 {d === dateCandidates!.earliestDate ? '· 가장 이른 날' : ''}
                                 </p>
                                 <AvailabilityHelp room={room} date={d} />
                                 </div>
@@ -1083,6 +1109,14 @@ export default function Home() {
                           );
                         })}
                     </div>
+                    {dateCandidates!.hasMore && (
+                      <button
+                        className="secondary full"
+                        onClick={() => setExpandedDateContext(dateContext)}
+                      >
+                        날짜 더 보기
+                      </button>
+                    )}
                     {host && (
                       <div className="manual-date">
                         <h3>다른 날짜로 정하고 싶나요?</h3>
@@ -1090,7 +1124,7 @@ export default function Home() {
                         <input
                           aria-label="다른 날짜"
                           type="date"
-                          min={room.start}
+                          min={room.start < today ? today : room.start}
                           max={room.end}
                           value={customDate}
                           onChange={(e) => setCustomDate(e.target.value)}
@@ -1101,8 +1135,7 @@ export default function Home() {
                               className="secondary"
                               disabled={
                                 !customDate ||
-                                customDate < room.start ||
-                                customDate > room.end
+                                !isSelectableDate(room, customDate, today)
                               }
                               key={s}
                               onClick={() =>
@@ -1135,19 +1168,17 @@ export default function Home() {
                         <button
                           key={String(v)}
                           className={v ? 'primary' : 'secondary'}
+                          aria-pressed={room.confirmations?.[user] === v}
                           onClick={async () => {
-                            const confirmations = {
-                              ...room.confirmations,
-                              [user]: v,
-                            };
-                            const r = { ...room, confirmations };
-                            if (r.members.every((m) => m in confirmations)) {
-                              r.attendees = r.members.filter(
-                                (m) => confirmations[m],
-                              );
-                              if (r.attendees.length >= 2) r.stage = 'region';
-                            }
-                            if (!(await update(r))) return;
+                            if (
+                              !(await send({
+                                type: 'confirm',
+                                roomId: room.id,
+                                value: v,
+                                regionRevision: room.regionRevision ?? 0,
+                              }))
+                            )
+                              return;
                             notify('참석 여부를 제출했어요.');
                           }}
                         >
@@ -1159,6 +1190,23 @@ export default function Home() {
                       {Object.keys(room.confirmations || {}).length} /{' '}
                       {room.members.length}명 확인
                     </p>
+                    {room.members.every(
+                      (member) => member in (room.confirmations || {}),
+                    ) && room.attendees.length < 2 && (
+                      <p className="helper">
+                        참석 가능한 친구가 2명보다 적어요. 방장이 다른 날짜를
+                        선택할 수 있어요.
+                      </p>
+                    )}
+                    {host && (
+                      <button
+                        className="secondary full"
+                        disabled={busy}
+                        onClick={reopenDate}
+                      >
+                        다른 날짜 선택하기
+                      </button>
+                    )}
                   </main>
                 )}
                 {room.stage === 'region' && (
@@ -1188,7 +1236,7 @@ export default function Home() {
                         </b>
                       </div>
                       <div className="regions">
-                        {(room.round > 1 ? room.tied || [] : room.regions).map(
+                        {regionVoteOptions(room).map(
                           (r) => (
                             <button
                               key={r}
@@ -1215,6 +1263,12 @@ export default function Home() {
                           ),
                         )}
                       </div>
+                      {!regionVoteOptions(room).length && (
+                        <p className="helper">
+                          투표할 지역 후보가 없어요. 방장이 일정을 변경해 날짜와
+                          지역을 다시 정할 수 있어요.
+                        </p>
+                      )}
                       {room.round === 1 && (
                           <button
                             className="add-region"
@@ -1232,15 +1286,17 @@ export default function Home() {
                     </main>
                     {room.attendees.includes(user) ? (
                       <CTA
-                        disabled={!regionVotes.length}
+                        disabled={!validRegionVote(room, user, regionVotes)}
                         onClick={async () => {
+                          if (!validRegionVote(room, user, regionVotes)) return;
                           if (
-                            !(await update(
-                              tallyRegion({
-                                ...room,
-                                votes: { ...room.votes, [user]: regionVotes },
-                              }),
-                            ))
+                            !(await send({
+                              type: 'vote',
+                              roomId: room.id,
+                              choices: regionVotes,
+                              round: room.round,
+                              regionRevision: room.regionRevision ?? 0,
+                            }))
                           )
                             return;
                           notify('지역 투표를 제출했어요.');
@@ -1261,8 +1317,16 @@ export default function Home() {
                   <main>
                     <div className="result-icon">🤔</div>
                     <Heading
-                      title="친구들의 마음이\n반반으로 나뉘었어요"
-                      desc="한 번 더 골라 볼까요, 운에 맡겨 볼까요?"
+                      title={
+                        room.tied?.length
+                          ? '친구들의 마음이\n반반으로 나뉘었어요'
+                          : '다시 고를 지역이 없어요'
+                      }
+                      desc={
+                        room.tied?.length
+                          ? '한 번 더 골라 볼까요, 운에 맡겨 볼까요?'
+                          : '방장이 일정을 변경해 날짜와 지역을 다시 정할 수 있어요.'
+                      }
                     />
                     <div className="tie-options">
                       {room.tied?.map((r) => (
@@ -1272,7 +1336,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                    {host ? (
+                    {host && !!room.tied?.length ? (
                       <>
                         <button
                           className="primary"
@@ -1286,7 +1350,6 @@ export default function Home() {
                               }))
                             )
                               return;
-                            setRegionVotes([]);
                           }}
                         >
                           한 번 더 투표하기
@@ -1313,7 +1376,7 @@ export default function Home() {
                           <Sparkles size={18} /> 무작위로 정하기
                         </button>
                       </>
-                    ) : (
+                    ) : !host && (
                       <p className="helper">
                         방장이 다음 방법을 선택하고 있어요.
                       </p>

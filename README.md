@@ -46,6 +46,9 @@ npm run dev
 현재 미정 정책의 체험 가정:
 - 집계 이후 방장이 최종 날짜·시간대를 확인합니다.
 - 후보 외 날짜 참석 재확인은 현재 활성 멤버 전원 기준입니다.
+- 참석 재확인 중에도 방장이 날짜를 다시 선택할 수 있습니다. 참석자가 2명 미만이면 응답 결과와 안내를 유지하며, 방장이 재선택할 때 기존 가능 일정·지역 후보를 보존하고 참석 확인·지역 투표만 초기화합니다.
+- 재확인 중 멤버가 나가거나 강퇴되면 남은 멤버 기준으로 진행 조건을 다시 계산합니다. 전원이 응답하고 참석자가 2명 이상이면 지역 투표로 넘어갑니다.
+- 날짜 후보는 한국 시간 기준 오늘 이후부터 7개를 보여주며, 더보기로 나머지를 모두 펼칩니다. 한국 시간 자정과 탭 복귀 시 기준일을 갱신합니다.
 - 방장은 넘기기 또는 종료 후 나갈 수 있습니다.
 - 지역 확정 뒤 날짜/지역 변경 UI는 제공하지 않습니다.
 - 링크 이름은 직접 입력합니다. 자동 미리보기는 연결 전입니다.
@@ -66,12 +69,42 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `lib/meeting.ts`: 데이터 모델·날짜/지역 집계
 - `app/layout.tsx`: 한국어 문서·메타데이터
 
-## 검증
+## 자동 테스트
 
 ```sh
-npx tsc --noEmit
+npm ci
+npx playwright install chromium
+npm run typecheck
 npm run lint
-npm run build
+npm run lint:tests
+npm run test:all
 ```
 
-별도 세션의 HTTP API 검증으로 동시 투표 보존, 타 계정 방 격리, 방장 권한, 지난 회차 투표 거절, 재접속, 링크 공유, 나가기와 로그아웃을 확인했습니다. 실제 브라우저 조작·시각 검증은 별도 수행하지 않았습니다.
+Linux에서 Chromium 실행에 필요한 시스템 패키지까지 설치하려면 `npx playwright install --with-deps chromium`을 사용합니다. CI는 Ubuntu·Node 24에서 같은 검사를 실행합니다.
+
+검사별로 실행할 수도 있습니다.
+
+```sh
+npm test
+npm run test:api
+npm run test:e2e
+```
+
+| 명령 | 검사 범위 |
+| --- | --- |
+| `npm test` | 기존 Node 내장 러너의 단위 테스트 41개 |
+| `npm run test:api` | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장 |
+| `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
+| `npm run test:all` | 단위·API·브라우저 전체, 앱 빌드 한 번 |
+
+`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`에는 실제 API를 사용하는 `meeting.spec.ts`와 명시적인 모의 응답을 사용하는 `timing.spec.ts`가 포함됩니다. 후자는 한국 자정·복귀 이벤트·지연 GET 방어를 검증하며 D1 저장 검증을 대신하지 않습니다.
+
+API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
+
+처음에는 단일 워커·자동 재시도 없이 실행합니다. 프로젝트별 계정 3개를 재사용하고 테스트별로 새 방을 만듭니다. 로그인·로그아웃 검사는 별도 세션을 사용합니다. 재사용용 `storageState` 파일은 만들지 않습니다. 실패 trace에는 임시 테스트 PIN·세션 쿠키가 포함될 수 있으며, 해당 계정과 세션은 실행 종료 시 임시 D1과 함께 삭제됩니다. 운영 계정·Cloudflare 토큰·운영 DB는 사용하지 않고 제품의 인증·요청 제한을 그대로 적용합니다.
+
+실패 시 `test-artifacts/server.log`, `test-results/`의 스크린샷·trace, `playwright-report/`의 HTML 보고서를 확인합니다. `npx playwright show-report`로 마지막 보고서를 열 수 있습니다. 결과물은 Git에서 제외됩니다. 테스트가 성공해도 서버 로그와 JSON 결과는 남으며 다음 실행에서 덮어씁니다.
+
+`.github/workflows/test.yml`은 PR 및 `main` 푸시에서 타입 검사·앱/테스트 린트·전체 테스트를 실행하고, 실패 자료를 7일간 보관합니다. 새 커밋은 같은 PR/브랜치의 이전 실행을 취소합니다. 테스트를 생성하는 작업이며 배포는 실행하지 않습니다.
+
+실제 실행 결과와 미검증 범위는 `VALIDATION.md`에 기록합니다. 복귀 이벤트를 합성한 검사는 실제 OS의 백그라운드 타이머 제한 검증과 구분합니다. 로컬 결과를 원격 CI·운영 DB·Vercel 게이트웨이·GA4·실제 배포 검증으로 간주하지 않습니다.

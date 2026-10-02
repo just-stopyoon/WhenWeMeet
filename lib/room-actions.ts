@@ -19,6 +19,15 @@ export const koreanToday = () =>
   }).format(new Date());
 export const expiresOn = (r: Room) =>
   r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1);
+function updateConfirmationStage(r: Room) {
+  const confirmations = r.confirmations ?? {};
+  r.attendees = r.members.filter((m) => confirmations[m] === true);
+  if (
+    r.members.every((m) => Object.hasOwn(confirmations, m)) &&
+    r.attendees.length >= 2
+  )
+    r.stage = 'region';
+}
 export function applyAction(source: Room, user: string, a: Action): Room {
   const r: Room = structuredClone(source);
   requireThat(
@@ -76,14 +85,14 @@ export function applyAction(source: Room, user: string, a: Action): Room {
       break;
     }
     case 'confirm':
-      requireThat(r.stage === 'confirm' && typeof a.value === 'boolean');
+      requireThat(
+        r.stage === 'confirm' &&
+          (a.regionRevision ?? 0) === (r.regionRevision ?? 0),
+        '마감되었거나 지난 날짜의 참석 확인이에요. 새로 확인해 주세요.',
+      );
+      requireThat(typeof a.value === 'boolean');
       r.confirmations = { ...r.confirmations, [user]: a.value as boolean };
-      r.attendees = r.members.filter((m) => r.confirmations![m]);
-      if (
-        r.members.every((m) => m in r.confirmations!) &&
-        r.attendees.length >= 2
-      )
-        r.stage = 'region';
+      updateConfirmationStage(r);
       break;
     case 'vote': {
       requireThat(
@@ -106,7 +115,9 @@ export function applyAction(source: Room, user: string, a: Action): Room {
     }
     case 'reopenDate':
       host();
-      requireThat(r.stage === 'region' || r.stage === 'tie');
+      requireThat(
+        r.stage === 'confirm' || r.stage === 'region' || r.stage === 'tie',
+      );
       r.stage = 'date';
       delete r.date;
       delete r.region;
@@ -168,7 +179,8 @@ export function applyAction(source: Room, user: string, a: Action): Room {
       delete r.votes[member];
       delete r.confirmations?.[member];
       delete r.emails[member];
-      if (r.stage === 'region') return tallyRegion(r);
+      if (r.stage === 'confirm') updateConfirmationStage(r);
+      else if (r.stage === 'region') return tallyRegion(r);
       break;
     }
     case 'close':
