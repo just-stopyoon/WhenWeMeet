@@ -9,6 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "test": "node scripts/test.mjs",
     "lint": "oxlint app lib/meeting.ts",
     "lint:all": "oxlint",
     "format": "oxfmt"

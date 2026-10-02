@@ -140,14 +140,13 @@ export function aggregate(r: Room) {
 }
 export function tallyRegion(r: Room): Room {
   if (!r.attendees.length || !r.attendees.every((m) => r.votes[m])) return r;
-  const tally = r.attendees
-    .flatMap((m) => r.votes[m])
-    .reduce<Record<string, number>>(
-      (a, b) => ((a[b] = (a[b] || 0) + 1), a),
-      {},
-    );
-  const max = Math.max(...Object.values(tally));
-  const tied = Object.keys(tally).filter((k) => tally[k] === max);
+  const tally = new Map<string, number>();
+  for (const region of r.attendees.flatMap((m) => r.votes[m]))
+    tally.set(region, (tally.get(region) ?? 0) + 1);
+  const max = Math.max(...tally.values());
+  const tied = [...tally]
+    .filter(([, count]) => count === max)
+    .map(([region]) => region);
   return {
     ...r,
     tied,
