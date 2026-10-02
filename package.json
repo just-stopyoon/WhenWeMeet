@@ -12,7 +12,12 @@
     "test": "node scripts/test.mjs",
     "lint": "oxlint app lib/meeting.ts",
     "lint:all": "oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "test:api": "playwright test --project=api",
+    "test:e2e": "playwright test --project=chromium-360 --project=chromium-430",
+    "test:all": "npm test && playwright test",
+    "typecheck": "tsc --noEmit --incremental false",
+    "lint:tests": "oxlint lib/room-actions.ts lib/meeting-view.ts hooks/use-korean-today.ts tests scripts/test.mjs scripts/test-server.mjs playwright.config.ts"
   },
   "dependencies": {
     "react": "19.2.6",
@@ -39,6 +44,7 @@
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
     "@openai/sites-vite-plugin": "0.2.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
