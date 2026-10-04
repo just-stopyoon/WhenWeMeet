@@ -31,6 +31,7 @@ npm run dev
 
 - React 19 + TypeScript, Vite/Vinext 기반 로컬 프로젝트
 - 기본 너비 430px, 360px 모바일 대응, 하단 고정 버튼·네이티브 dialog 바텀시트
+- 바텀시트 종료 후 최초 호출 버튼으로 포커스 복원. 화면이 바뀌거나 버튼을 사용할 수 없으면 현재 화면 제목으로 이동
 - 계정·여러 모임·고정 정원·기간 검증·달력 제출·날짜 후보·참석 재확인
 - 지역 추가 마감·투표·동률 재투표·추첨·최종 링크 보드
 - 방장 위임·강퇴·나가기·종료·만료 조회 제한
@@ -97,7 +98,7 @@ npm run test:e2e
 | `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
 | `npm run test:all` | 단위·API·브라우저 전체, 앱 빌드 한 번 |
 
-`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`에는 실제 API를 사용하는 `meeting.spec.ts`와 명시적인 모의 응답을 사용하는 `timing.spec.ts`가 포함됩니다. 후자는 한국 자정·복귀 이벤트·지연 GET 방어를 검증하며 D1 저장 검증을 대신하지 않습니다.
+`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`와 `sheet-focus.spec.ts`는 실제 API/D1로 사용자 흐름·저장·바텀시트 종료 후 포커스를 검사합니다. `timing.spec.ts`와 `sheet-focus-mocked.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경과 포커스를 검증하며 D1 저장 검증을 대신하지 않습니다.
 
 API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
 

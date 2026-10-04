@@ -445,12 +445,18 @@ test('모바일 폭에서 하단 제출과 dialog 닫기·Escape를 사용할 �
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
     await dialog.getByRole('button', { name: '닫기', exact: true }).click();
     await expect(dialog).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: '설정', exact: true }),
+    ).toBeFocused();
     await expect(page.locator('body')).not.toHaveCSS('overflow', 'hidden');
     await usablePrimary(submit);
     await page.getByRole('button', { name: '설정', exact: true }).click();
     await expect(dialog).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: '설정', exact: true }),
+    ).toBeFocused();
     await expect(page.locator('body')).not.toHaveCSS('overflow', 'hidden');
     await usablePrimary(submit);
     await noOverflow(page);
