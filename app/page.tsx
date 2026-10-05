@@ -1,5 +1,12 @@
 'use client';
-import { useState, useEffect, useRef, useCallback, useId } from 'react';
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useCallback,
+  useId,
+} from 'react';
 import {
   ArrowLeft,
   Plus,
@@ -90,7 +97,7 @@ function Heading({
   return (
     <div className="heading">
       {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-      <h1>
+      <h1 tabIndex={-1}>
         {title
           .replaceAll('\\n', '\n')
           .split('\n')
@@ -155,11 +162,24 @@ export default function Home() {
     [linkName, setLinkName] = useState('');
   const [editingSchedule, setEditingSchedule] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const sheetInputRef = useRef<HTMLInputElement>(null);
+  const appRef = useRef<HTMLDivElement>(null);
+  const sheetWasOpen = useRef(false);
+  const sheetOrigin = useRef<{
+    trigger: HTMLButtonElement | undefined;
+    context: string;
+  } | null>(null);
+  const sheetContext = JSON.stringify([
+    user,
+    view,
+    view === 'room' ? active : null,
+  ]);
   function setView(v: View) {
     setError('');
     changeView(v);
   }
-  function setSheet(v: Sheet) {
+  function setSheet(v: Sheet, trigger?: HTMLButtonElement) {
+    if (v && !sheet) sheetOrigin.current = { trigger, context: sheetContext };
     setInput('');
     setError('');
     changeSheet(v);
@@ -199,7 +219,10 @@ export default function Home() {
       changeSheet(null);
       setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
     }
-    if (!data.user) changeView('login');
+    if (!data.user) {
+      changeView('login');
+      changeSheet(null);
+    }
   }, [api, view, active]);
   useEffect(() => {
     let stopped = false;
@@ -265,20 +288,53 @@ export default function Home() {
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [view]);
-  useEffect(() => {
-    if (!sheet) return;
-    dialogRef.current?.showModal();
-    const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSheet(null);
-    };
-    document.addEventListener('keydown', key);
+  const sheetOpen = sheet !== null;
+  useLayoutEffect(() => {
+    if (!sheetOpen) return;
     const old = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = old;
-      document.removeEventListener('keydown', key);
     };
-  }, [sheet]);
+  }, [sheetOpen]);
+  useLayoutEffect(() => {
+    if (sheet) {
+      sheetWasOpen.current = true;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (!dialog.open) {
+        dialog.showModal();
+        // React's mount-time autoFocus runs while the dialog is still hidden.
+        sheetInputRef.current?.focus({ preventScroll: true });
+      }
+      // An internal sheet switch can remove the focused control.
+      if (!dialog.contains(document.activeElement))
+        dialog
+          .querySelector<HTMLButtonElement>('.sheet-close')
+          ?.focus({ preventScroll: true });
+      return;
+    }
+    // Restore only after an actual close commit, never in effect cleanup.
+    if (!sheetWasOpen.current) return;
+    sheetWasOpen.current = false;
+    const origin = sheetOrigin.current;
+    sheetOrigin.current = null;
+    const trigger = origin?.trigger;
+    if (
+      origin?.context === sheetContext &&
+      trigger?.isConnected &&
+      !trigger.matches(':disabled, [aria-disabled="true"]') &&
+      trigger.getClientRects().length > 0 &&
+      getComputedStyle(trigger).visibility === 'visible'
+    ) {
+      trigger.focus({ preventScroll: true });
+      if (document.activeElement === trigger) return;
+    }
+    const heading = appRef.current?.querySelector<HTMLElement>('main h1');
+    heading?.focus({ preventScroll: true });
+    if (!heading || document.activeElement !== heading)
+      appRef.current?.focus({ preventScroll: true });
+  }, [sheet, sheetContext]);
   const room = rooms.find((r) => r.id === active),
     host = room?.host === user;
   const showScheduleResults = !!room && user in room.responses && !editingSchedule;
@@ -502,6 +558,8 @@ export default function Home() {
         </small>
       </aside>
       <div
+        ref={appRef}
+        tabIndex={-1}
         className={'app-shell' + (busy ? ' is-saving' : '')}
         aria-busy={busy}
       >
@@ -532,8 +590,10 @@ export default function Home() {
           <button
             className="icon-button"
             aria-label="설정"
-            onClick={() =>
-              user ? setSheet('settings') : notify('닉네임으로 시작해 보세요.')
+            onClick={(event) =>
+              user
+                ? setSheet('settings', event.currentTarget)
+                : notify('닉네임으로 시작해 보세요.')
             }
           >
             {view === 'room' ? (
@@ -807,7 +867,7 @@ export default function Home() {
               <main>
                 <div className="empty">
                   <CalendarDays />
-                  <h1>종료된 약속이에요</h1>
+                  <h1 tabIndex={-1}>종료된 약속이에요</h1>
                   <p>새로운 약속으로 다시 만나요.</p>
                   <button className="primary" onClick={() => setView('home')}>
                     내 모임으로
@@ -859,7 +919,9 @@ export default function Home() {
                       <button
                         aria-label="참여 인원 보기"
                         className="participation"
-                        onClick={() => setSheet('members')}
+                        onClick={(event) =>
+                          setSheet('members', event.currentTarget)
+                        }
                       >
                         {avatars(room.members.slice(0, 4))}
                         <span>
@@ -1011,7 +1073,9 @@ export default function Home() {
                         </div>
                         {user in room.responses && <button
                           className="text-button"
-                          onClick={() => setSheet('attendees')}
+                          onClick={(event) =>
+                            setSheet('attendees', event.currentTarget)
+                          }
                         >
                           이 시간에 가능한 친구 보기 <ChevronRight size={15} />
                         </button>}
@@ -1272,7 +1336,9 @@ export default function Home() {
                       {room.round === 1 && (
                           <button
                             className="add-region"
-                            onClick={() => setSheet('addRegion')}
+                            onClick={(event) =>
+                              setSheet('addRegion', event.currentTarget)
+                            }
                           >
                             <Plus size={17} /> 다른 지역 추가하기
                           </button>
@@ -1496,7 +1562,7 @@ export default function Home() {
                     )}
                     <button
                       className="add-region"
-                      onClick={() => setSheet('link')}
+                      onClick={(event) => setSheet('link', event.currentTarget)}
                     >
                       <Plus size={18} />{' '}
                       {category === 'food' ? '음식점' : '카페'} 링크 추가
@@ -1523,7 +1589,10 @@ export default function Home() {
             ref={dialogRef}
             className="sheet"
             aria-labelledby="sheet-title"
-            onCancel={() => setSheet(null)}
+            onCancel={(event) => {
+              event.preventDefault();
+              setSheet(null);
+            }}
           >
             <div className="sheet-handle" />
             <button
@@ -1603,6 +1672,7 @@ export default function Home() {
                   지역 이름
                   <input
                     autoFocus
+                    ref={sheetInputRef}
                     maxLength={25}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -1639,6 +1709,7 @@ export default function Home() {
                   링크
                   <input
                     autoFocus
+                    ref={sheetInputRef}
                     type="url"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
