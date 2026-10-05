@@ -17,7 +17,7 @@
     "test:e2e": "playwright test --project=chromium-360 --project=chromium-430",
     "test:all": "npm test && playwright test",
     "typecheck": "tsc --noEmit --incremental false",
-    "lint:tests": "oxlint lib/room-actions.ts lib/meeting-view.ts hooks/use-korean-today.ts tests scripts/test.mjs scripts/test-server.mjs playwright.config.ts"
+    "lint:tests": "oxlint lib/room-actions.ts lib/meeting-view.ts lib/meeting-contract.ts hooks/use-korean-today.ts tests scripts/test.mjs scripts/test-server.mjs playwright.config.ts"
   },
   "dependencies": {
     "react": "19.2.6",

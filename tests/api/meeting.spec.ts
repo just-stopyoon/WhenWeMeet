@@ -8,14 +8,19 @@ import {
   getRoom,
   listRooms,
   postAction,
+  postRawAction,
   prepareRoom,
   slotsFor,
   today,
   type Room,
+  type MeetingRequest,
   type TestAccount,
 } from '../support/fixtures';
 
-const vote = (room: Room, choices: string[]) => ({
+const vote = (
+  room: Room,
+  choices: readonly string[],
+): Extract<MeetingRequest, { type: 'vote' }> => ({
   type: 'vote',
   roomId: room.id,
   choices,
@@ -245,6 +250,89 @@ test('미응답자가 직접 탈퇴해도 확인을 재계산하고 방장은 �
   await action(friend, { type: 'close', roomId: room.id });
 });
 
+for (const revision of [undefined, null]) {
+  test(`참석 확인과 지역 투표는 revision ${revision === null ? 'null' : '생략'}을 0으로 처리하고 재선택 후 거절한다`, async ({
+    accounts,
+  }) => {
+    const [host, friend] = accounts;
+    let room = await prepareRoom(accounts, { start: addDays(today(), 1) });
+    const slot = `${room.start}|점심`;
+    room = await action(host, {
+      type: 'date',
+      roomId: room.id,
+      slot,
+      manual: true,
+    });
+    await expectError(
+      await postRawAction(host, {
+        type: 'confirm',
+        roomId: room.id,
+        value: 'true',
+        regionRevision: revision,
+      }),
+      400,
+    );
+    for (const [index, account] of accounts.entries())
+      room = await action(account, {
+        type: 'confirm',
+        roomId: room.id,
+        value: index < 2,
+        regionRevision: revision,
+      });
+    expect(room.stage).toBe('region');
+    expect(room.attendees).toEqual([host.name, friend.name]);
+    room = await action(host, {
+      ...vote(room, ['연남']),
+      regionRevision: revision,
+    });
+    expect(room.votes).toEqual({ [host.name]: ['연남'] });
+
+    room = await action(host, { type: 'reopenDate', roomId: room.id });
+    expect(room.regionRevision).toBe(1);
+    await action(host, { type: 'date', roomId: room.id, slot, manual: true });
+    await expectError(
+      await postAction(friend, {
+        type: 'confirm',
+        roomId: room.id,
+        value: true,
+        regionRevision: revision,
+      }),
+      400,
+      /지난 날짜/,
+    );
+    expect((await getRoom(host, room.id)).confirmations).toEqual({});
+    for (const [index, account] of accounts.entries())
+      room = await action(account, {
+        type: 'confirm',
+        roomId: room.id,
+        value: index < 2,
+        regionRevision: 1,
+      });
+    await expectError(
+      await postAction(host, {
+        ...vote(room, ['연남']),
+        regionRevision: revision,
+      }),
+      400,
+      /지난 회차/,
+    );
+    await expectError(
+      await postRawAction(host, {
+        type: 'vote',
+        roomId: room.id,
+        choices: ['연남'],
+        regionRevision: 1,
+      }),
+      400,
+      /지난 회차/,
+    );
+    expect((await getRoom(host, room.id)).votes).toEqual({});
+    room = await action(host, vote(room, ['연남']));
+    expect(room.votes).toEqual({ [host.name]: ['연남'] });
+    await action(host, { type: 'close', roomId: room.id });
+  });
+}
+
 test('동시 지역 투표를 보존하고 재투표에서 이전 회차를 거절한다', async ({
   accounts,
 }) => {
@@ -473,5 +561,24 @@ test('최종 링크는 함께 조회하며 작성자와 방장만 삭제한다',
     }),
     400,
   );
+  room = await action(author, {
+    type: 'addLink',
+    roomId: room.id,
+    url: 'https://example.com/unnamed-place',
+    name: '',
+    category: 'food',
+  });
+  expect(room.links).toHaveLength(1);
+  expect(room.links[0].name).toBe('');
+  await expectError(
+    await postRawAction(author, {
+      type: 'addLink',
+      roomId: room.id,
+      url: 'https://example.com/missing-name',
+      category: 'food',
+    }),
+    400,
+  );
+  expect((await getRoom(other, room.id)).links).toEqual(room.links);
   await action(host, { type: 'close', roomId: room.id });
 });

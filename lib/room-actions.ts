@@ -1,6 +1,8 @@
 import { addDays, daysBetween, tallyRegion, type Room } from './meeting';
 
-export type Action = { type: string; [key: string]: unknown };
+// Incoming fields are deliberately unknown until the checks below validate them.
+// Keep this boundary separate from the strict outgoing MeetingRequest contract.
+export type UnvalidatedAction = { type?: unknown; [key: string]: unknown };
 const fail = (message: string): never => {
   throw new Error(message);
 };
@@ -28,7 +30,11 @@ function updateConfirmationStage(r: Room) {
   )
     r.stage = 'region';
 }
-export function applyAction(source: Room, user: string, a: Action): Room {
+export function applyAction(
+  source: Room,
+  user: string,
+  a: UnvalidatedAction,
+): Room {
   const r: Room = structuredClone(source);
   requireThat(
     r.stage !== 'closed' && koreanToday() < expiresOn(r),

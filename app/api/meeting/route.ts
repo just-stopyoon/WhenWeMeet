@@ -1,10 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { newRoom, daysBetween, type Room } from '../../../lib/meeting';
+import type {
+  MeetingError,
+  MeetingResponse,
+  MeetingSnapshot,
+} from '../../../lib/meeting-contract';
 import {
   applyAction,
   expiresOn,
   koreanToday,
-  type Action,
+  type UnvalidatedAction,
 } from '../../../lib/room-actions';
 
 const db = () => (env as unknown as { DB: D1Database }).DB;
@@ -29,7 +34,11 @@ async function initialize() {
     db().prepare('DELETE FROM attempts WHERE expires < ?').bind(Date.now()),
   ]);
 }
-const reply = (data: unknown, status = 200, headers = {}) =>
+const reply = (
+  data: MeetingSnapshot | MeetingResponse | MeetingError,
+  status = 200,
+  headers = {},
+) =>
   Response.json(data, {
     status,
     headers: { 'Cache-Control': 'no-store', ...headers },
@@ -113,7 +122,9 @@ export async function POST(req: Request) {
       return reply({ error: '허용되지 않은 요청이에요.' }, 403);
     const raw = await req.text();
     if (raw.length > 20000) return reply({ error: '요청이 너무 커요.' }, 413);
-    const a = JSON.parse(raw) as Action;
+    // This property bag is not a validated MeetingRequest. Preserve the runtime
+    // validation order below, including authentication before room-action checks.
+    const a = JSON.parse(raw) as UnvalidatedAction;
     await initialize();
     if (a.type === 'login') {
       const name =
