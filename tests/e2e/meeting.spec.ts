@@ -12,6 +12,7 @@ import {
   today,
   uniqueTitle,
   type Room,
+  type MeetingRequest,
   type TestAccount,
 } from '../support/fixtures';
 
@@ -51,8 +52,9 @@ async function openRoom(page: Page, room: Room) {
 
 async function uiAction(
   page: Page,
-  type: string,
+  type: MeetingRequest['type'],
   click: () => Promise<unknown>,
+  expectedPayload?: MeetingRequest,
 ): Promise<UiResult> {
   const pendingResponse = page.waitForResponse((response) => {
     const request = response.request();
@@ -64,6 +66,8 @@ async function uiAction(
   });
   await click();
   const response = await pendingResponse;
+  if (expectedPayload)
+    expect(response.request().postDataJSON()).toEqual(expectedPayload);
   expect(response.status(), `${type} UI request failed.`).toBe(200);
   const result = (await response.json()) as UiResult;
   expect(result.error).toBeUndefined();
@@ -153,8 +157,19 @@ test('로그인과 초대 참가부터 일정·지역 확정, 새로고침까지
     await uiAction(hostPage, 'schedule', () =>
       hostPage.getByRole('button', { name: '이 일정으로 제출하기' }).click(),
     );
-    await uiAction(hostPage, 'date', () =>
-      hostPage.getByRole('button', { name: '점심 확정', exact: true }).click(),
+    await uiAction(
+      hostPage,
+      'date',
+      () =>
+        hostPage
+          .getByRole('button', { name: '점심 확정', exact: true })
+          .click(),
+      {
+        type: 'date',
+        roomId: room.id,
+        slot: `${room.start}|점심`,
+        manual: false,
+      },
     );
     await hostPage.getByRole('button', { name: '다른 지역 추가하기' }).click();
     await hostPage.getByLabel('지역 이름', { exact: true }).fill('__proto__');
@@ -213,15 +228,26 @@ test('참석 인원 부족을 방장이 취소·승인 가능한 날짜 재선�
     room = await prepareRoom([host, guest], {
       title: uniqueTitle('참석 부족 복구'),
     });
-    room = await action(host, {
-      type: 'date',
-      roomId: room.id,
-      slot: `${room.start}|점심`,
-      manual: true,
-    });
     const hostPage = await actor(browser, contexts, baseURL, viewport, host);
     const guestPage = await actor(browser, contexts, baseURL, viewport, guest);
     await openRoom(hostPage, room);
+    await hostPage.getByLabel('다른 날짜', { exact: true }).fill(room.start);
+    await uiAction(
+      hostPage,
+      'date',
+      () =>
+        hostPage.getByRole('button', { name: '점심으로 다시 확인' }).click(),
+      {
+        type: 'date',
+        roomId: room.id,
+        slot: `${room.start}|점심`,
+        manual: true,
+      },
+    );
+    const manualDate = await getRoom(host, room.id);
+    expect(manualDate.stage).toBe('confirm');
+    expect(manualDate.attendees).toEqual([]);
+    expect(manualDate.date).toBe(`${room.start}|점심`);
     await openRoom(guestPage, room);
     await uiAction(hostPage, 'confirm', () =>
       hostPage

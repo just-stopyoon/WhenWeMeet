@@ -6,9 +6,17 @@ import {
   type APIResponse,
 } from '@playwright/test';
 import { addDays, daysBetween, type Room } from '../../lib/meeting';
+import type {
+  MeetingError,
+  MeetingRequest,
+  MeetingResponse,
+  MeetingSnapshot,
+  RoomRequest,
+} from '../../lib/meeting-contract';
 
 export { addDays, expect };
 export type { Room };
+export type { MeetingRequest, RoomRequest };
 export type TestAccount = {
   name: string;
   pin: string;
@@ -19,7 +27,6 @@ export type Accounts = [TestAccount, TestAccount, TestAccount];
 export type CreateRoomOptions = Partial<
   Pick<Room, 'title' | 'start' | 'end' | 'size' | 'mode'>
 >;
-export type MeetingAction = { type: string; [key: string]: unknown };
 
 export const today = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -56,11 +63,13 @@ export const test = base.extend<object, { accounts: Accounts }>({
           });
           contexts.push(request);
           const response = await request.post('/api/meeting', {
-            data: { type: 'login', name, pin },
+            data: { type: 'login', name, pin } satisfies MeetingRequest,
           });
           expect(response.status(), 'Test account login failed.').toBe(200);
-          const result = (await response.json()) as { user: string };
+          const result = (await response.json()) as MeetingSnapshot;
+          expect(Object.keys(result).sort()).toEqual(['rooms', 'user']);
           expect(result.user).toBe(name);
+          expect(Array.isArray(result.rooms)).toBe(true);
           accounts.push({
             name,
             pin,
@@ -77,16 +86,21 @@ export const test = base.extend<object, { accounts: Accounts }>({
   ],
 });
 
-export const postAction = (account: TestAccount, payload: MeetingAction) =>
+export const postAction = (account: TestAccount, payload: MeetingRequest) =>
+  account.request.post('/api/meeting', { data: payload });
+
+// Only malformed-input tests use this path; normal fixtures use MeetingRequest.
+export const postRawAction = (account: TestAccount, payload: unknown) =>
   account.request.post('/api/meeting', { data: payload });
 
 export async function action(
   account: TestAccount,
-  payload: MeetingAction,
+  payload: RoomRequest,
 ): Promise<Room> {
   const response = await postAction(account, payload);
   expect(response.status(), `${payload.type} request failed.`).toBe(200);
-  const result = (await response.json()) as { room?: Room | null };
+  const result = (await response.json()) as MeetingResponse<RoomRequest>;
+  expect(Object.keys(result)).toEqual(['room']);
   expect(result.room, `${payload.type} did not return a room.`).toBeTruthy();
   return result.room!;
 }
@@ -94,7 +108,8 @@ export async function action(
 export async function listRooms(account: TestAccount): Promise<Room[]> {
   const response = await account.request.get('/api/meeting');
   expect(response.status()).toBe(200);
-  const result = (await response.json()) as { user: string; rooms: Room[] };
+  const result = (await response.json()) as MeetingSnapshot;
+  expect(Object.keys(result).sort()).toEqual(['rooms', 'user']);
   expect(result.user).toBe(account.name);
   return result.rooms;
 }
@@ -156,7 +171,8 @@ export async function expectError(
   message?: RegExp,
 ) {
   expect(response.status()).toBe(status);
-  const result = (await response.json()) as { error: string };
+  const result = (await response.json()) as MeetingError;
+  expect(Object.keys(result)).toEqual(['error']);
   expect(typeof result.error).toBe('string');
   if (message) expect(result.error).toMatch(message);
 }

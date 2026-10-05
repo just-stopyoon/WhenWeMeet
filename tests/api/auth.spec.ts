@@ -7,7 +7,9 @@ import {
   expectError,
   listRooms,
   postAction,
+  postRawAction,
   today,
+  type MeetingRequest,
 } from '../support/fixtures';
 
 test('로그인, 재접속, 로그아웃은 독립 세션에 반영된다', async ({
@@ -40,7 +42,11 @@ test('로그인, 재접속, 로그아웃은 독립 세션에 반영된다', asyn
       /닉네임 또는 PIN/,
     );
     const login = await request.post('/api/meeting', {
-      data: { type: 'login', name: host.name, pin: host.pin },
+      data: {
+        type: 'login',
+        name: host.name,
+        pin: host.pin,
+      } satisfies MeetingRequest,
     });
     expect(login.status()).toBe(200);
     const cookie = login.headers()['set-cookie'] ?? '';
@@ -59,11 +65,11 @@ test('로그인, 재접속, 로그아웃은 독립 세션에 반영된다', asyn
       expect(
         body.rooms.some((entry: { id: string }) => entry.id === room.id),
       ).toBe(true);
-      expect(
-        (
-          await request.post('/api/meeting', { data: { type: 'logout' } })
-        ).status(),
-      ).toBe(200);
+      const logout = await request.post('/api/meeting', {
+        data: { type: 'logout' } satisfies MeetingRequest,
+      });
+      expect(logout.status()).toBe(200);
+      expect(await logout.json()).toEqual({});
       expect(await (await reconnected.get('/api/meeting')).json()).toEqual({
         user: '',
         rooms: [],
@@ -109,7 +115,7 @@ test('동일 출처, 요청 크기, 생성 입력 검증을 유지한다', async
     { mode: 'unknown' },
   ])
     await expectError(
-      await postAction(host, {
+      await postRawAction(host, {
         type: 'create',
         title: '잘못된 입력',
         start,
@@ -153,6 +159,32 @@ test('참가 전 방 목록과 변경 권한은 계정별로 격리된다', asyn
     await postAction(friend, { type: 'close', roomId: room.id }),
     400,
     /방장만/,
+  );
+  await action(host, { type: 'close', roomId: room.id });
+});
+
+test('잘못된 JSON과 액션 필드는 HTTP 경계에서 거절하고 저장 상태를 보존한다', async ({
+  accounts,
+}) => {
+  const [host] = accounts;
+  const room = await createRoom(host);
+  const malformed: unknown[] = [
+    '{',
+    null,
+    [],
+    42,
+    {},
+    { type: 'unknown', roomId: room.id },
+    { type: 'close' },
+    { type: 'schedule', roomId: room.id },
+    { type: 'schedule', roomId: room.id, slots: '점심' },
+    { type: 'schedule', roomId: room.id, slots: [null] },
+  ];
+  for (const payload of malformed)
+    // Parser error wording varies by runtime; status and wire shape are stable.
+    await expectError(await postRawAction(host, payload), 400);
+  expect((await listRooms(host)).find((entry) => entry.id === room.id)).toEqual(
+    room,
   );
   await action(host, { type: 'close', roomId: room.id });
 });

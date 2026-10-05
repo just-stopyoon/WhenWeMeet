@@ -10,6 +10,7 @@ import {
   test,
   uniqueTitle,
   type Room,
+  type MeetingRequest,
   type TestAccount,
 } from '../support/fixtures';
 
@@ -29,8 +30,9 @@ async function openRoom(page: Page, room: Room) {
 
 async function uiAction(
   page: Page,
-  type: string,
+  type: MeetingRequest['type'],
   interact: () => Promise<unknown>,
+  expectedPayload?: MeetingRequest,
 ) {
   const pendingResponse = page.waitForResponse((response) => {
     const request = response.request();
@@ -42,6 +44,8 @@ async function uiAction(
   });
   await interact();
   const response = await pendingResponse;
+  if (expectedPayload)
+    expect(response.request().postDataJSON()).toEqual(expectedPayload);
   expect(response.status(), `${type} UI request failed.`).toBe(200);
   const result = (await response.json()) as { error?: string };
   expect(result.error).toBeUndefined();
@@ -166,7 +170,7 @@ test('설정·참여 인원·가능한 친구 시트와 중첩 초대가 최초 
   }
 });
 
-test('지역·링크 시트는 닫기와 실제 저장 후 원래 추가 버튼을 다시 포커스한다', async ({
+test('지역·링크 저장 후 추가 버튼으로 복귀하고 링크 삭제도 D1에 저장된다', async ({
   page,
   context,
   accounts,
@@ -227,10 +231,20 @@ test('지역·링크 시트는 닫기와 실제 저장 후 원래 추가 버튼�
     const linkDialog = page.getByRole('dialog');
     await linkDialog.getByLabel('링크', { exact: true }).fill(url);
     await linkDialog.getByLabel(/이름/).fill('포커스 장소');
-    await uiAction(page, 'addLink', () =>
-      linkDialog
-        .getByRole('button', { name: '링크 추가하기', exact: true })
-        .click(),
+    await uiAction(
+      page,
+      'addLink',
+      () =>
+        linkDialog
+          .getByRole('button', { name: '링크 추가하기', exact: true })
+          .click(),
+      {
+        type: 'addLink',
+        roomId: room.id,
+        url,
+        name: '포커스 장소',
+        category: 'food',
+      },
     );
     await expect(linkDialog).toHaveCount(0);
     await expect(addLink).toBeFocused();
@@ -243,6 +257,19 @@ test('지역·링크 시트는 닫기와 실제 저장 후 원래 추가 버튼�
         author: host.name,
       }),
     ]);
+    await uiAction(
+      page,
+      'deleteLink',
+      () =>
+        page.getByRole('button', { name: '링크 삭제', exact: true }).click(),
+      { type: 'deleteLink', roomId: room.id, id: saved.links[0].id },
+    );
+    expect((await getRoom(host, room.id)).links).toEqual([]);
+    await openRoom(page, room);
+    await expect(page.getByRole('link', { name: /포커스 장소/ })).toHaveCount(
+      0,
+    );
+    await expect(page.getByText('첫 번째 장소를 추천해 주세요')).toBeVisible();
   } finally {
     await cleanupRoom(host, room);
   }
@@ -339,8 +366,11 @@ test('모임 나가기 확인을 취소하면 시트를 유지하고 승인하�
       )
       .toBe(true);
     expect((await getRoom(host, room.id)).members).toContain(guest.name);
-    await uiAction(page, 'remove', () =>
-      nativeConfirmation(page, true, () => leave.click()),
+    await uiAction(
+      page,
+      'remove',
+      () => nativeConfirmation(page, true, () => leave.click()),
+      { type: 'remove', roomId: room.id, member: guest.name },
     );
     await expectHomeFocus(page);
     expect((await getRoom(host, room.id)).members).not.toContain(guest.name);

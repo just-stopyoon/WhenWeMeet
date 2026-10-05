@@ -66,9 +66,14 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `app/page.tsx`: 화면·서버 동기화 및 인터랙션
 - `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
+- `lib/meeting-contract.ts`: 화면·서버·테스트가 공유하는 액션별 요청과 응답 타입
 - `app/globals.css`: 디자인 토큰과 모바일 스타일
 - `lib/meeting.ts`: 데이터 모델·날짜/지역 집계
 - `app/layout.tsx`: 한국어 문서·메타데이터
+
+화면은 변경하려는 동작을 명시적인 `/api/meeting` 액션으로 전송합니다. 모임 객체의 차이로 동작을 추론하거나 클라이언트에서 참석자·추첨 결과·링크 ID를 생성하지 않고 서버 응답을 반영합니다. 로그인은 사용자와 방 목록, 로그아웃은 빈 객체, 모임 변경은 방을 반환하며 본인 탈퇴의 `{ room: null }`은 정상 응답입니다.
+
+공통 요청 타입은 정상 호출을 검사하기 위한 계약입니다. 서버는 요청을 `UnvalidatedAction`으로 받아 기존 필드·권한·상태 검증을 수행합니다. `manual` 생략 및 `regionRevision` 생략·`null`의 기존 처리는 유지하며, 화면의 참석 확인·투표는 현재 revision을 명시합니다. 테스트에서 의도적으로 잘못된 요청을 보낼 때는 `postRawAction()`을 사용합니다.
 
 ## 자동 테스트
 
@@ -98,7 +103,7 @@ npm run test:e2e
 | `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
 | `npm run test:all` | 단위·API·브라우저 전체, 앱 빌드 한 번 |
 
-`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`와 `sheet-focus.spec.ts`는 실제 API/D1로 사용자 흐름·저장·바텀시트 종료 후 포커스를 검사합니다. `timing.spec.ts`와 `sheet-focus-mocked.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경과 포커스를 검증하며 D1 저장 검증을 대신하지 않습니다.
+`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`, `sheet-focus.spec.ts`, `meeting-actions.spec.ts`는 실제 API/D1로 사용자 흐름·요청 payload·저장·바텀시트 포커스를 검사합니다. `timing.spec.ts`, `sheet-focus-mocked.spec.ts`, `meeting-actions-mocked.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경·저장 실패 후 입력과 포커스를 검증하며 D1 저장 검증을 대신하지 않습니다. `tests/meeting-contract.types.ts`의 요청·응답 계약 검사는 `npm run typecheck`에서 수행합니다.
 
 API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
 
