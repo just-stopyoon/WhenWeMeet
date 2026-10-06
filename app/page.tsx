@@ -5,171 +5,42 @@ import {
   useLayoutEffect,
   useRef,
   useCallback,
-  useId,
 } from 'react';
 import {
   ArrowLeft,
-  Plus,
-  ChevronRight,
-  ChevronLeft,
   CalendarDays,
-  MapPin,
-  Link2,
   Users,
   Check,
-  X,
   MoreHorizontal,
-  Sun,
-  Moon,
-  Copy,
-  LogOut,
-  Coffee,
-  Utensils,
-  Sparkles,
-  PartyPopper,
-  Heart,
-  CheckCheck,
-  CircleHelp,
 } from 'lucide-react';
-import { iso, addDays, labelDate, type Room } from '../lib/meeting';
+import { addDays, type Room } from '../lib/meeting';
 import {
   dateCandidateView,
-  isSelectableDate,
   reconcileRegionVoteDraft,
   regionVoteContext,
-  regionVoteOptions,
   validRegionVote,
   type RegionVoteDraft,
 } from '../lib/meeting-view';
 import { useKoreanToday } from '../hooks/use-korean-today';
-import type {
-  MeetingError,
-  MeetingRequest,
-  MeetingResponse,
-  MeetingSnapshot,
-} from '../lib/meeting-contract';
-type View = 'home' | 'login' | 'create' | 'join' | 'room';
-type Sheet =
-  | null
-  | 'members'
-  | 'invite'
-  | 'settings'
-  | 'link'
-  | 'addRegion'
-  | 'attendees';
-function Avatar({ name, index = 0 }: { name: string; index?: number }) {
-  return <span className={'avatar c' + (index % 5)}>{name[0]}</span>;
-}
-function AvailabilityHelp({ room, date }: { room: Room; date: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const id = useId();
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [open]);
-  return <div className="availability-help" ref={ref}>
-    <button type="button" className="availability-help-trigger" aria-label={`${labelDate(date)} 가능한 친구 보기`} aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
-      <CircleHelp size={18} aria-hidden="true" />
-    </button>
-    {open && <section id={id} className="availability-bubble" aria-label="시간대별 가능한 친구">
-      {['점심', '저녁'].map(slot => {
-        const people = room.members.filter(member => room.responses[member]?.includes(date + '|' + slot));
-        return <div key={slot}><strong>{slot} · {people.length}명 가능</strong><p>{people.length ? people.join(', ') : '가능한 친구가 없어요.'}</p></div>;
-      })}
-    </section>}
-  </div>;
-}
-function Heading({
-  title,
-  desc,
-  eyebrow,
-}: {
-  title: string;
-  desc?: string;
-  eyebrow?: string;
-}) {
-  return (
-    <div className="heading">
-      {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-      <h1 tabIndex={-1}>
-        {title
-          .replaceAll('\\n', '\n')
-          .split('\n')
-          .map((s, i) => (
-            <span key={i}>
-              {s}
-              <br />
-            </span>
-          ))}
-      </h1>
-      {desc && <p>{desc}</p>}
-    </div>
-  );
-}
-function CTA({
-  children,
-  onClick,
-  disabled = false,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="bottom-action">
-      <button className="primary" disabled={disabled} onClick={onClick}>
-        {children}
-      </button>
-    </div>
-  );
-}
-async function api(): Promise<MeetingSnapshot>;
-async function api<R extends MeetingRequest>(
-  payload: R,
-): Promise<MeetingResponse<R>>;
-async function api(
-  payload?: MeetingRequest,
-): Promise<MeetingSnapshot | MeetingResponse> {
-  const response = await fetch(
-    '/api/meeting',
-    payload
-      ? {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }
-      : { cache: 'no-store' },
-  );
-  const data = (await response.json()) as
-    | MeetingSnapshot
-    | MeetingResponse
-    | MeetingError;
-  if (!response.ok)
-    throw new Error(
-      ('error' in data && data.error) ||
-        '연결하지 못했어요. 다시 시도해 주세요.',
-    );
-  return data as MeetingSnapshot | MeetingResponse;
-}
+import { useMeetingSync } from '../hooks/use-meeting-sync';
+import type { MeetingSnapshot } from '../lib/meeting-contract';
+import type { View, Sheet } from '../components/meeting/types';
+import { HomeView } from '../components/meeting/home-view';
+import { LoginView } from '../components/meeting/login-view';
+import { CreateView } from '../components/meeting/create-view';
+import { JoinView } from '../components/meeting/join-view';
+import { RoomView } from '../components/meeting/room-view';
+import { ScheduleView } from '../components/meeting/schedule-view';
+import { DateView } from '../components/meeting/date-view';
+import { ConfirmView } from '../components/meeting/confirm-view';
+import { RegionView } from '../components/meeting/region-view';
+import { TieView } from '../components/meeting/tie-view';
+import { FinalView } from '../components/meeting/final-view';
+import { MeetingSheets } from '../components/meeting/meeting-sheets';
 
 export default function Home() {
   const today = useKoreanToday();
-  const [ready, setReady] = useState(false),
-    [rooms, setRooms] = useState<Room[]>([]),
-    [user, setUser] = useState(''),
-    [view, changeView] = useState<View>('home'),
+  const [view, changeView] = useState<View>('home'),
     [active, setActive] = useState('demo');
   const [sheet, changeSheet] = useState<Sheet>(null),
     [toast, setToast] = useState(''),
@@ -204,6 +75,46 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
+  const onInitialLoad = useCallback(
+    (snapshot: MeetingSnapshot, invite: string | null) => {
+      if (invite) setCode(invite.toUpperCase());
+      changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
+    },
+    [],
+  );
+  const onRefresh = useCallback(
+    (snapshot: MeetingSnapshot) => {
+      if (view === 'room' && !snapshot.rooms.some((r) => r.id === active)) {
+        changeView('home');
+        changeSheet(null);
+        setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+      }
+      if (!snapshot.user) {
+        changeView('login');
+        changeSheet(null);
+      }
+    },
+    [view, active],
+  );
+  const onInitialError = useCallback((message: string) => {
+    setError(message);
+    changeView('login');
+  }, []);
+  const onPollError = useCallback((message: string) => setToast(message), []);
+  const onSaveStart = useCallback(() => setError(''), []);
+  const onSaveError = useCallback((message: string) => {
+    setError(message);
+    setToast(message);
+  }, []);
+  const { ready, user, rooms, busy, send, replaceSession, clearSession } =
+    useMeetingSync({
+      onInitialLoad,
+      onRefresh,
+      onInitialError,
+      onPollError,
+      onSaveStart,
+      onSaveError,
+    });
   const sheetContext = JSON.stringify([
     user,
     view,
@@ -218,86 +129,6 @@ export default function Home() {
     setInput('');
     setError('');
     changeSheet(v);
-  }
-  const [busy, setBusy] = useState(false);
-  const pending = useRef(false),
-    generation = useRef(0);
-  const refresh = useCallback(async () => {
-    const stamp = generation.current;
-    const data = await api();
-    if (pending.current || generation.current !== stamp) return;
-    setUser(data.user);
-    setRooms(data.rooms);
-    if (view === 'room' && !data.rooms.some((r) => r.id === active)) {
-      changeView('home');
-      changeSheet(null);
-      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
-    }
-    if (!data.user) {
-      changeView('login');
-      changeSheet(null);
-    }
-  }, [view, active]);
-  useEffect(() => {
-    let stopped = false;
-    const invite = new URLSearchParams(window.location.search).get('join');
-    api()
-      .then((data) => {
-        if (stopped) return;
-        if (invite) setCode(invite.toUpperCase());
-        setUser(data.user);
-        setRooms(data.rooms);
-        changeView(data.user ? (invite ? 'join' : 'home') : 'login');
-      })
-      .catch((e) => {
-        setError(e.message);
-        changeView('login');
-      })
-      .finally(() => setReady(true));
-    return () => {
-      stopped = true;
-    };
-  }, []);
-  useEffect(() => {
-    if (!ready || !user) return;
-    const timer = setInterval(() => {
-      if (!pending.current && document.visibilityState === 'visible')
-        refresh().catch(() =>
-          setToast('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.'),
-        );
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [ready, user, refresh]);
-  async function send<R extends MeetingRequest>(
-    payload: R,
-  ): Promise<MeetingResponse<R> | null> {
-    if (pending.current) return null;
-    pending.current = true;
-    generation.current++;
-    setBusy(true);
-    setError('');
-    try {
-      const data = await api(payload);
-      if ('room' in data) {
-        const updated = data.room;
-        if (updated)
-          setRooms((prev) => [
-            ...prev.filter((r) => r.id !== updated.id),
-            updated,
-          ]);
-        else if ('roomId' in payload)
-          setRooms((prev) => prev.filter((r) => r.id !== payload.roomId));
-      }
-      return data;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : '저장하지 못했어요.';
-      setError(message);
-      setToast(message);
-      return null;
-    } finally {
-      pending.current = false;
-      setBusy(false);
-    }
   }
   useEffect(() => {
     if (toast) {
@@ -357,7 +188,8 @@ export default function Home() {
   }, [sheet, sheetContext]);
   const room = rooms.find((r) => r.id === active),
     host = room?.host === user;
-  const showScheduleResults = !!room && user in room.responses && !editingSchedule;
+  const showScheduleResults =
+    !!room && user in room.responses && !editingSchedule;
   const nextRegionDraft = room
     ? reconcileRegionVoteDraft(regionDraft, room, user)
     : regionDraft;
@@ -375,7 +207,8 @@ export default function Home() {
     setExpandedDateContext('');
   }
   function setRegionVotes(choices: string[]) {
-    if (room) setRegionDraft({ context: regionVoteContext(room, user), choices });
+    if (room)
+      setRegionDraft({ context: regionVoteContext(room, user), choices });
   }
   const expired = (r: Room) =>
     r.stage === 'closed' ||
@@ -396,8 +229,7 @@ export default function Home() {
   async function login() {
     const data = await send({ type: 'login', name: nick.trim(), pin });
     if (!data) return;
-    setUser(data.user);
-    setRooms(data.rooms);
+    replaceSession(data);
     setPin('');
     setView(code ? 'join' : 'home');
   }
@@ -432,8 +264,7 @@ export default function Home() {
   }
   async function confirmDate(slot: string, manual = false) {
     if (!room || !host) return;
-    if (!(await send({ type: 'date', roomId: room.id, slot, manual })))
-      return;
+    if (!(await send({ type: 'date', roomId: room.id, slot, manual }))) return;
     setRegionVotes([]);
     notify(
       manual
@@ -454,6 +285,14 @@ export default function Home() {
   }
   async function removeMember(n: string) {
     if (!room) return;
+    if (
+      !window.confirm(
+        n === user
+          ? '모임에서 나갈까요? 제출한 표는 삭제돼요.'
+          : `${n}님을 내보내고 표를 삭제할까요?`,
+      )
+    )
+      return;
     if (!(await send({ type: 'remove', roomId: room.id, member: n }))) return;
     if (n === user) {
       setView('home');
@@ -473,14 +312,106 @@ export default function Home() {
       notify('공유를 취소했거나 지원하지 않는 환경이에요.');
     }
   }
+  async function confirmAttendance(value: boolean) {
+    if (!room) return;
+    if (
+      await send({
+        type: 'confirm',
+        roomId: room.id,
+        value,
+        regionRevision: room.regionRevision ?? 0,
+      })
+    )
+      notify('참석 여부를 제출했어요.');
+  }
+  async function vote() {
+    if (!room || !validRegionVote(room, user, regionVotes)) return;
+    if (
+      await send({
+        type: 'vote',
+        roomId: room.id,
+        choices: regionVotes,
+        round: room.round,
+        regionRevision: room.regionRevision ?? 0,
+      })
+    )
+      notify('지역 투표를 제출했어요.');
+  }
+  async function runoff() {
+    if (room) await send({ type: 'runoff', roomId: room.id });
+  }
+  async function random() {
+    if (room && (await send({ type: 'random', roomId: room.id })))
+      notify('만날 지역이 정해졌어요!');
+  }
+  async function deleteLink(id: string) {
+    if (room) await send({ type: 'deleteLink', roomId: room.id, id });
+  }
+  async function copyInvite() {
+    if (!room) return;
+    try {
+      await navigator.clipboard.writeText(
+        window.location.origin + '/?join=' + room.code,
+      );
+      notify('초대 링크를 복사했어요.');
+    } catch {
+      notify('코드를 직접 선택해 복사해 주세요.');
+    }
+  }
+  async function addRegion() {
+    if (!room) return;
+    if (!input.trim()) return setError('지역을 입력해 주세요.');
+    if (room.regions.includes(input.trim()))
+      return setError('이미 있는 지역이에요.');
+    if (room.stage !== 'region' || room.round !== 1)
+      return setError('1차 지역 투표가 마감되어 추가할 수 없어요.');
+    if (await send({ type: 'region', roomId: room.id, name: input.trim() }))
+      setSheet(null);
+  }
+  async function addLink() {
+    if (!room) return;
+    let url;
+    try {
+      url = new URL(input);
+      if (!['http:', 'https:'].includes(url.protocol)) throw Error();
+    } catch {
+      return setError('올바른 http 또는 https 링크를 입력해 주세요.');
+    }
+    if (room.links.some((l) => l.url === url.href && l.category === category))
+      return setError('이미 추가한 링크예요.');
+    if (
+      !(await send({
+        type: 'addLink',
+        roomId: room.id,
+        url: url.href,
+        name: linkName.trim(),
+        category,
+      }))
+    )
+      return;
+    setSheet(null);
+    setLinkName('');
+    notify('링크를 추가했어요.');
+  }
+  async function transfer(member: string) {
+    if (!room || !(await send({ type: 'transfer', roomId: room.id, member })))
+      return;
+    setSheet(null);
+    notify(`${member}님에게 방장을 넘겼어요.`);
+  }
+  async function closeRoom() {
+    if (!room || !window.confirm('모임을 종료할까요?')) return;
+    if (!(await send({ type: 'close', roomId: room.id }))) return;
+    setSheet(null);
+    setView('home');
+  }
+  async function logout() {
+    if (!(await send({ type: 'logout' }))) return;
+    clearSession();
+    setView('login');
+    setSheet(null);
+  }
   const mine = rooms.filter((r) => r.members.includes(user) && !expired(r));
-  const avatars = (names: string[]) => (
-    <div className="avatar-stack">
-      {names.map((n, i) => (
-        <Avatar key={n} name={n} index={i} />
-      ))}
-    </div>
-  );
   if (!ready)
     return (
       <div className="app-shell">
@@ -558,962 +489,134 @@ export default function Home() {
           </button>
         </header>
         {view === 'home' && (
-          <>
-            <main>
-              <Heading
-                eyebrow="함께라서 더 좋은 시간"
-                title={`${user}님,\n우리 언제 만날까요?`}
-                desc="흩어져 있던 약속을 한곳에 모았어요."
-              />
-              <div className="home-summary">
-                <div>
-                  <span className="tag blue">다가오는 모임</span>
-                  <h2>
-                    기다려지는 약속이
-                    <br />
-                    <strong>{mine.length}개</strong> 있어요
-                  </h2>
-                </div>
-                <div className="calendar-art">
-                  <div>LET’S MEET</div>
-                  <b>{Number(today.slice(8))}</b>
-                  <span className="art-check">
-                    <Check size={19} />
-                  </span>
-                </div>
-              </div>
-              <div className="section-head">
-                <h2>
-                  내 모임 <span>{mine.length}</span>
-                </h2>
-                <button className="text-button" onClick={() => setView('join')}>
-                  코드로 참가 <ChevronRight size={15} />
-                </button>
-              </div>
-              {mine.map((r, i) => (
-                <button
-                  className="room-card"
-                  key={r.id}
-                  onClick={() => openRoom(r)}
-                >
-                  <div className="card-top">
-                    <span className="room-emoji">
-                      {i % 2 === 0 ? '🍀' : '☕'}
-                    </span>
-                    <span
-                      className={
-                        'tag ' + (r.stage === 'final' ? 'green' : 'blue')
-                      }
-                    >
-                      {r.stage === 'schedule'
-                        ? '일정 투표 중'
-                        : r.stage === 'date' || r.stage === 'confirm'
-                          ? '날짜 정하는 중'
-                          : r.stage === 'final'
-                            ? '약속 확정'
-                            : '지역 투표 중'}
-                    </span>
-                    <ChevronRight className="chevron" size={20} />
-                  </div>
-                  <h3>{r.title}</h3>
-                  <p>
-                    <CalendarDays size={15} />
-                    {r.date
-                      ? labelDate(r.date.split('|')[0]) +
-                        ' · ' +
-                        r.date.split('|')[1]
-                      : `${labelDate(r.start)} – ${labelDate(r.end)}`}
-                  </p>
-                  <div className="card-bottom">
-                    {avatars(r.members.slice(0, 4))}
-                    <span>
-                      {r.stage === 'schedule'
-                        ? `${Object.keys(r.responses).length} / ${r.size}명 제출`
-                        : `${r.attendees.length}명과 함께`}
-                    </span>
-                  </div>
-                </button>
-              ))}
-              {!mine.length && (
-                <div className="empty">
-                  <CalendarDays />
-                  <h3>첫 약속을 만들어 볼까요?</h3>
-                  <p>친구들을 초대하고 가능한 날짜를 모아보세요.</p>
-                </div>
-              )}
-              <div className="tip">
-                <span>💡</span>
-                <p>
-                  가능한 날짜만 고르면 끝!
-                  <br />
-                  <b>점심·저녁으로 가볍게 정해요.</b>
-                </p>
-              </div>
-            </main>
-            <CTA onClick={() => setView('create')}>
-              <Plus size={20} /> 새 모임 만들기
-            </CTA>
-          </>
+          <HomeView
+            user={user}
+            today={today}
+            rooms={mine}
+            onOpenRoom={openRoom}
+            onJoin={() => setView('join')}
+            onCreate={() => setView('create')}
+          />
         )}
         {view === 'login' && (
-          <>
-            <main>
-              <div className="login-symbol">👋</div>
-              <Heading
-                title="반가워요!\n어떻게 불러드릴까요?"
-                desc="닉네임과 PIN 하나로 우리 모임을 관리해요."
-              />
-              <label className="field">
-                닉네임
-                <input
-                  autoComplete="username"
-                  maxLength={16}
-                  value={nick}
-                  onChange={(e) => setNick(e.target.value)}
-                  placeholder="친구들이 알아볼 수 있는 이름"
-                />
-              </label>
-              <label className="field">
-                숫자 4자리 PIN
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="기억하기 쉬운 숫자 4자리"
-                />
-              </label>
-              <p className="helper">
-                처음 쓰는 닉네임이면 새 계정으로 시작해요.
-                <br />
-                PIN은 찾을 수 없으니 꼭 기억해 주세요.
-              </p>
-              {error && <p className="error">{error}</p>}
-            </main>
-            <CTA onClick={login}>시작하기</CTA>
-          </>
+          <LoginView
+            nick={nick}
+            pin={pin}
+            error={error}
+            onNickChange={setNick}
+            onPinChange={setPin}
+            onSubmit={login}
+          />
         )}
         {view === 'create' && (
-          <>
-            <main>
-              <Heading
-                eyebrow="새로운 약속"
-                title="만나고 싶은 친구들을\n한자리에 초대해요"
-              />
-              <label className="field">
-                모임 이름
-                <input
-                  value={name}
-                  maxLength={30}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="예: 오랜만에 우리 다섯 🍀"
-                />
-              </label>
-              <div className="field">
-                몇 명이 함께하나요?
-                <div className="stepper">
-                  <span>나를 포함해서</span>
-                  <button
-                    aria-label="인원 줄이기"
-                    disabled={size === 2}
-                    onClick={() => setSize(size - 1)}
-                  >
-                    −
-                  </button>
-                  <strong>{size}명</strong>
-                  <button
-                    aria-label="인원 늘리기"
-                    disabled={size === 10}
-                    onClick={() => setSize(size + 1)}
-                  >
-                    +
-                  </button>
-                </div>
-                <small>만든 뒤에는 인원수를 바꿀 수 없어요.</small>
-              </div>
-              <div className="field">
-                언제쯤 만날까요?
-                <div className="date-inputs">
-                  <input
-                    aria-label="시작일"
-                    type="date"
-                    min={today}
-                    value={start}
-                    onChange={(e) => setStart(e.target.value)}
-                  />
-                  <span>—</span>
-                  <input
-                    aria-label="종료일"
-                    type="date"
-                    min={start}
-                    value={end}
-                    onChange={(e) => setEnd(e.target.value)}
-                  />
-                </div>
-                <small>시작일과 마지막 날을 포함해 7~31일</small>
-              </div>
-              <div className="field">
-                날짜를 정하는 기준
-                {(['all', 'most'] as const).map((m) => (
-                  <button
-                    key={m}
-                    aria-label={
-                      m === 'all'
-                        ? '모두 가능한 날'
-                        : '가장 많이 모일 수 있는 날'
-                    }
-                    aria-pressed={mode === m}
-                    className={'radio-card ' + (mode === m ? 'selected' : '')}
-                    onClick={() => setMode(m)}
-                  >
-                    <div>
-                      <b>
-                        {m === 'all'
-                          ? '모두 가능한 날'
-                          : '가장 많이 모일 수 있는 날'}
-                      </b>
-                      <p>
-                        {m === 'all'
-                          ? '한 명도 빠짐없이 함께해요'
-                          : '더 많은 친구와 먼저 만나요'}
-                      </p>
-                    </div>
-                    <span className="radio" />
-                  </button>
-                ))}
-              </div>
-              {error && <p className="error">{error}</p>}
-            </main>
-            <CTA onClick={create}>모임 만들기</CTA>
-          </>
+          <CreateView
+            name={name}
+            start={start}
+            end={end}
+            size={size}
+            mode={mode}
+            today={today}
+            error={error}
+            onNameChange={setName}
+            onStartChange={setStart}
+            onEndChange={setEnd}
+            onSizeChange={setSize}
+            onModeChange={setMode}
+            onSubmit={create}
+          />
         )}
         {view === 'join' && (
-          <>
-            <main>
-              <Heading
-                title="친구가 보낸\n초대 코드를 입력해요"
-                desc="다시 들어가면 이전 응답이 그대로 있어요."
-              />
-              <label className="field">
-                초대 코드
-                <input
-                  value={code}
-                  maxLength={12}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="12자리 초대 코드"
-                />
-              </label>
-              <p className="helper">
-                친구가 보낸 초대 링크를 열거나 12자리 코드를 입력해 주세요.
-              </p>
-              {error && <p className="error">{error}</p>}
-            </main>
-            <CTA onClick={join}>모임 참가하기</CTA>
-          </>
+          <JoinView
+            code={code}
+            error={error}
+            onCodeChange={setCode}
+            onSubmit={join}
+          />
         )}
         {view === 'room' && room && (
-          <>
-            {expired(room) ? (
-              <main>
-                <div className="empty">
-                  <CalendarDays />
-                  <h1 tabIndex={-1}>종료된 약속이에요</h1>
-                  <p>새로운 약속으로 다시 만나요.</p>
-                  <button className="primary" onClick={() => setView('home')}>
-                    내 모임으로
-                  </button>
-                </div>
-              </main>
-            ) : (
-              <>
-                <div className="steps">
-                  {['날짜', '지역', '약속'].map((s, i) => {
-                    const idx = ['schedule', 'date', 'confirm'].includes(
-                      room.stage,
-                    )
-                      ? 0
-                      : room.stage === 'final'
-                        ? 2
-                        : 1;
-                    return (
-                      <div key={s} className={idx >= i ? 'on' : ''}>
-                        <span>{idx > i ? <Check size={12} /> : i + 1}</span>
-                        {i === 0 && host && ['region', 'tie'].includes(room.stage) ? (
-                          <button
-                            className="change-date-button"
-                            disabled={busy}
-                            onClick={reopenDate}
-                          >
-                            일정 변경하기
-                          </button>
-                        ) : s}
-                        {i < 2 && <i />}
-                      </div>
-                    );
-                  })}
-                </div>
-                {['region', 'tie', 'final'].includes(room.stage) && (
-                  <section className="meeting-attendees" aria-label="이번 약속 참석자">
-                    <strong>이번 약속 참석자 · {room.attendees.length}명</strong>
-                    <p>{room.attendees.length ? room.attendees.join(', ') : '참석 가능한 사람이 없어요.'}</p>
-                    {!room.attendees.includes(user) && <p className="spectator-notice">선택된 날짜·시간에 참석하지 않는 것으로 되어 있어요. 현재 관전 중이며 지역 투표에는 참여할 수 없어요.</p>}
-                  </section>
-                )}
-                {room.stage === 'schedule' && (
-                  <>
-                    <main>
-                      <Heading
-                        title={showScheduleResults ? '친구들은 언제 가능할까요?' : '우리, 언제 시간 돼요?'}
-                        desc={showScheduleResults ? '제출된 일정의 중간 결과예요. 날짜를 눌러 확인해 보세요.' : '가능한 날짜의 점심·저녁을 골라 주세요.'}
-                      />
-                      <button
-                        aria-label="참여 인원 보기"
-                        className="participation"
-                        onClick={(event) =>
-                          setSheet('members', event.currentTarget)
-                        }
-                      >
-                        {avatars(room.members.slice(0, 4))}
-                        <span>
-                          <b>{Object.keys(room.responses).length}명 제출</b>
-                          <small>
-                            {room.members.length}명 입장 · 총 {room.size}명
-                          </small>
-                        </span>
-                        <ChevronRight size={18} />
-                      </button>
-                      <div className="calendar">
-                        <div className="calendar-title">
-                          <h2>{month.replace('-', '년 ')}월</h2>
-                          <div>
-                            {[-1, 1].map((n) => (
-                              <button
-                                key={n}
-                                aria-label={n < 0 ? '이전 달' : '다음 달'}
-                                onClick={async () => {
-                                  const d = new Date(month + '-01T12:00:00');
-                                  d.setMonth(d.getMonth() + n);
-                                  setMonth(iso(d).slice(0, 7));
-                                }}
-                              >
-                                {n < 0 ? (
-                                  <ChevronLeft size={20} />
-                                ) : (
-                                  <ChevronRight size={20} />
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="week">
-                          {'일월화수목금토'.split('').map((d) => (
-                            <span key={d}>{d}</span>
-                          ))}
-                        </div>
-                        <div className="date-grid">
-                          {Array.from(
-                            {
-                              length: new Date(month + '-01T12:00:00').getDay(),
-                            },
-                            (_, i) => (
-                              <span key={'blank' + i} />
-                            ),
-                          )}
-                          {Array.from(
-                            {
-                              length: new Date(
-                                Number(month.slice(0, 4)),
-                                Number(month.slice(5)),
-                                0,
-                              ).getDate(),
-                            },
-                            (_, i) => {
-                              const date =
-                                  month + '-' + String(i + 1).padStart(2, '0'),
-                                slots = selected.filter((s) =>
-                                  s.startsWith(date),
-                                );
-                              const counts = ['점심', '저녁'].map(s => room.members.filter(m => room.responses[m]?.includes(date + '|' + s)).length);
-                              const available = Math.max(...counts);
-                              const heat = available / room.size;
-                              return (
-                                <button
-                                  key={date}
-                                  disabled={
-                                    date < room.start ||
-                                    date > room.end ||
-                                    (!showScheduleResults && date < today)
-                                  }
-                                  className={
-                                    (chosen === date ? 'focused ' : '') +
-                                    (!showScheduleResults && slots.length ? 'has-selection' : '')
-                                  }
-                                  style={showScheduleResults ? {backgroundColor: available ? `hsl(215 90% ${96 - heat * 48}%)` : '#f2f4f6', color: heat >= 0.6 ? '#fff' : '#191f28', outline: chosen === date ? '2px solid #191f28' : undefined, outlineOffset: '-2px'} : undefined}
-                                  onClick={() => setChosen(date)}
-                                  aria-label={showScheduleResults ? `${labelDate(date)}, 점심 ${counts[0]}명, 저녁 ${counts[1]}명 가능` : `${labelDate(date)} 선택`}
-                                  aria-pressed={chosen === date}
-                                >
-                                  <b>{i + 1}</b>
-                                  {showScheduleResults ? <span className="heat-count">{available}명</span> : <div className="dots">
-                                    {['점심', '저녁'].map((s) => (
-                                      <i
-                                        key={s}
-                                        className={
-                                          slots.includes(date + '|' + s)
-                                            ? 'filled'
-                                            : ''
-                                        }
-                                      />
-                                    ))}
-                                  </div>}
-                                  {date === today && <small>오늘</small>}
-                                </button>
-                              );
-                            },
-                          )}
-                        </div>
-                      </div>
-                      {showScheduleResults && <>
-                        <p className="helper">점심·저녁 중 더 많은 인원이 가능한 시간대를 기준으로 표시해요. 진할수록 많은 친구가 가능해요. (최대 {room.size}명)</p>
-                        <section className="schedule-results" aria-label="선택한 날짜의 중간 결과">
-                          <h3>{labelDate(chosen)}</h3>
-                          {['점심', '저녁'].map(slot => {
-                            const people = room.members.filter(m => room.responses[m]?.includes(chosen + '|' + slot));
-                            return <div key={slot}><h4>{slot} · {people.length}명 가능</h4><p>{people.length ? people.join(', ') : '제출한 친구 중 가능한 사람이 없어요.'}</p></div>;
-                          })}
-                          <p className="helper">아직 제출하지 않은 친구의 일정은 포함되지 않아요.</p>
-                        </section>
-                      </>}
-                      {!showScheduleResults && <>
-                      <div className="slot-panel">
-                        <div className="section-head">
-                          <h3>{labelDate(chosen)}</h3>
-                          <span>복수 선택 가능</span>
-                        </div>
-                        <div className="slot-buttons">
-                          {['점심', '저녁'].map((s, i) => {
-                            const key = chosen + '|' + s,
-                              yes = selected.includes(key);
-                            return (
-                              <button
-                                key={s}
-                                disabled={!isSelectableDate(room, chosen, today)}
-                                aria-pressed={yes}
-                                className={yes ? 'active' : ''}
-                                onClick={() =>
-                                  setSelected(
-                                    yes
-                                      ? selected.filter((x) => x !== key)
-                                      : [...selected, key],
-                                  )
-                                }
-                              >
-                                {i === 0 ? (
-                                  <Sun size={23} />
-                                ) : (
-                                  <Moon size={23} />
-                                )}
-                                <b>{s}</b>
-                                <span className="slot-check">
-                                  {yes && <Check size={13} />}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {user in room.responses && <button
-                          className="text-button"
-                          onClick={(event) =>
-                            setSheet('attendees', event.currentTarget)
-                          }
-                        >
-                          이 시간에 가능한 친구 보기 <ChevronRight size={15} />
-                        </button>}
-                      </div>
-                      <div className="selection-summary">
-                        <CheckCheck size={20} />
-                        <p>
-                          {selected.length ? (
-                            <>
-                              <b>
-                                {
-                                  new Set(selected.map((s) => s.split('|')[0]))
-                                    .size
-                                }
-                                일
-                              </b>
-                              의 일정을 골랐어요
-                            </>
-                          ) : (
-                            '선택하지 않은 시간은 불가능으로 제출돼요'
-                          )}
-                        </p>
-                        {!!selected.length && (
-                          <button onClick={() => setSelected([])}>
-                            초기화
-                          </button>
-                        )}
-                      </div>
-                      {room.responses[user] && (
-                        <p className="helper">
-                          이미 제출했어요. 마감 전까지 바꿀 수 있어요.
-                        </p>
-                      )}
-                      </>}
-                    </main>
-                    <CTA onClick={showScheduleResults ? () => { setSelected(room.responses[user] || []); setEditingSchedule(true); } : submit}>
-                      {showScheduleResults ? '내 일정 수정하기' : selected.length
-                        ? '이 일정으로 제출하기'
-                        : '가능한 일정 없음으로 제출'}
-                    </CTA>
-                  </>
-                )}
-                {room.stage === 'date' && (
-                  <main>
-                    <div className="result-icon">
-                      <CalendarDays size={36} />
-                      <span>✨</span>
-                    </div>
-                    <Heading
-                      title={
-                        dateCandidates!.slots.length
-                          ? '함께할 수 있는 날을\n찾았어요!'
-                          : '남은 기간에 조건에 맞는\n날짜가 없어요'
-                      }
-                      desc={
-                        host
-                          ? '친구들과 이야기하고 날짜를 확정해 주세요.'
-                          : '방장이 최종 날짜를 선택하고 있어요.'
-                      }
-                    />
-                    <div className="candidate-list">
-                      {dateCandidates!.dates.map((d) => {
-                          const candidates = dateCandidates!.slots.filter((c) =>
-                            c.slot.startsWith(d),
-                          );
-                          return (
-                            <div className="date-candidate" key={d}>
-                              <div className="date-square">
-                                <span>{Number(d.slice(5, 7))}월</span>
-                                <b>{Number(d.slice(8))}</b>
-                              </div>
-                              <div>
-                                <b>{labelDate(d)}</b>
-                                <div className="candidate-availability">
-                                <p>
-                                  {Math.max(...candidates.map((c) => c.count))}
-                                  명 가능 {d === dateCandidates!.earliestDate ? '· 가장 이른 날' : ''}
-                                </p>
-                                <AvailabilityHelp room={room} date={d} />
-                                </div>
-                                <div className="candidate-slots">
-                                  {candidates.map((c) => (
-                                    <button
-                                      disabled={!host}
-                                      key={c.slot}
-                                      onClick={() => confirmDate(c.slot)}
-                                    >
-                                      {c.slot.split('|')[1]} 확정{' '}
-                                      <ChevronRight size={12} />
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                    {dateCandidates!.hasMore && (
-                      <button
-                        className="secondary full"
-                        onClick={() => setExpandedDateContext(dateContext)}
-                      >
-                        날짜 더 보기
-                      </button>
-                    )}
-                    {host && (
-                      <div className="manual-date">
-                        <h3>다른 날짜로 정하고 싶나요?</h3>
-                        <p>기간 안의 날짜를 고르면 참석 여부를 다시 받아요.</p>
-                        <input
-                          aria-label="다른 날짜"
-                          type="date"
-                          min={room.start < today ? today : room.start}
-                          max={room.end}
-                          value={customDate}
-                          onChange={(e) => setCustomDate(e.target.value)}
-                        />
-                        <div className="two-buttons">
-                          {['점심', '저녁'].map((s) => (
-                            <button
-                              className="secondary"
-                              disabled={
-                                !customDate ||
-                                !isSelectableDate(room, customDate, today)
-                              }
-                              key={s}
-                              onClick={() =>
-                                confirmDate(customDate + '|' + s, true)
-                              }
-                            >
-                              {s}으로 다시 확인
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </main>
-                )}
-                {room.stage === 'confirm' && (
-                  <main>
-                    <Heading
-                      title="이날, 함께할 수 있나요?"
-                      desc="전체 일정을 다시 고를 필요 없어요."
-                    />
-                    <div className="confirmed-banner">
-                      <CalendarDays />
-                      <b>
-                        {labelDate(room.date!.split('|')[0])}{' '}
-                        {room.date!.split('|')[1]}
-                      </b>
-                    </div>
-                    <div className="two-buttons">
-                      {[true, false].map((v) => (
-                        <button
-                          key={String(v)}
-                          className={v ? 'primary' : 'secondary'}
-                          aria-pressed={room.confirmations?.[user] === v}
-                          onClick={async () => {
-                            if (
-                              !(await send({
-                                type: 'confirm',
-                                roomId: room.id,
-                                value: v,
-                                regionRevision: room.regionRevision ?? 0,
-                              }))
-                            )
-                              return;
-                            notify('참석 여부를 제출했어요.');
-                          }}
-                        >
-                          {v ? '갈 수 있어요' : '이번엔 어려워요'}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="helper">
-                      {Object.keys(room.confirmations || {}).length} /{' '}
-                      {room.members.length}명 확인
-                    </p>
-                    {room.members.every(
-                      (member) => member in (room.confirmations || {}),
-                    ) && room.attendees.length < 2 && (
-                      <p className="helper">
-                        참석 가능한 친구가 2명보다 적어요. 방장이 다른 날짜를
-                        선택할 수 있어요.
-                      </p>
-                    )}
-                    {host && (
-                      <button
-                        className="secondary full"
-                        disabled={busy}
-                        onClick={reopenDate}
-                      >
-                        다른 날짜 선택하기
-                      </button>
-                    )}
-                  </main>
-                )}
-                {room.stage === 'region' && (
-                  <>
-                    <main>
-                      <div className="confirmed-banner">
-                        <Check size={18} />
-                        <b>
-                          {labelDate(room.date!.split('|')[0])}{' '}
-                          {room.date!.split('|')[1]}
-                        </b>
-                      </div>
-                      <Heading
-                        title="어디에서 만날까요?"
-                        desc={
-                          !room.attendees.includes(user)
-                            ? '참석하는 친구들이 지역을 고르고 있어요.'
-                            : room.round > 1
-                            ? '동률인 지역 중 한 곳을 골라 주세요.'
-                            : '마음 가는 지역을 최대 2곳 골라 주세요.'
-                        }
-                      />
-                      <div className="section-head">
-                        <span>선호 지역</span>
-                        <b className="blue-text">
-                          {room.attendees.includes(user) ? `${regionVotes.length} / ${room.round > 1 ? 1 : 2}개` : '관전 중'}
-                        </b>
-                      </div>
-                      <div className="regions">
-                        {regionVoteOptions(room).map(
-                          (r) => (
-                            <button
-                              key={r}
-                              disabled={!room.attendees.includes(user)}
-                              aria-pressed={room.attendees.includes(user) && regionVotes.includes(r)}
-                              className={
-                                room.attendees.includes(user) && regionVotes.includes(r) ? 'selected' : ''
-                              }
-                              onClick={() =>
-                                setRegionVotes(
-                                  regionVotes.includes(r)
-                                    ? regionVotes.filter((x) => x !== r)
-                                    : regionVotes.length <
-                                        (room.round > 1 ? 1 : 2)
-                                      ? [...regionVotes, r]
-                                      : regionVotes,
-                                )
-                              }
-                            >
-                              <MapPin size={19} />
-                              <b>{r}</b>
-                              {room.attendees.includes(user) && regionVotes.includes(r) && <Check size={15} />}
-                            </button>
-                          ),
-                        )}
-                      </div>
-                      {!regionVoteOptions(room).length && (
-                        <p className="helper">
-                          투표할 지역 후보가 없어요. 방장이 일정을 변경해 날짜와
-                          지역을 다시 정할 수 있어요.
-                        </p>
-                      )}
-                      {room.round === 1 && (
-                          <button
-                            className="add-region"
-                            onClick={(event) =>
-                              setSheet('addRegion', event.currentTarget)
-                            }
-                          >
-                            <Plus size={17} /> 다른 지역 추가하기
-                          </button>
-                        )}
-                      <p className="helper">
-                        {Object.keys(room.votes).length} /{' '}
-                        {room.attendees.length}명 제출 · {room.round === 1
-                          ? '마감 전까지 후보를 추가하고 투표를 수정할 수 있어요.'
-                          : '동점인 후보 중 하나를 골라 주세요.'}
-                      </p>
-                    </main>
-                    {room.attendees.includes(user) ? (
-                      <CTA
-                        disabled={!validRegionVote(room, user, regionVotes)}
-                        onClick={async () => {
-                          if (!validRegionVote(room, user, regionVotes)) return;
-                          if (
-                            !(await send({
-                              type: 'vote',
-                              roomId: room.id,
-                              choices: regionVotes,
-                              round: room.round,
-                              regionRevision: room.regionRevision ?? 0,
-                            }))
-                          )
-                            return;
-                          notify('지역 투표를 제출했어요.');
-                        }}
-                      >
-                        {room.votes[user]
-                          ? '선택 수정하기'
-                          : '이 지역으로 투표하기'}
-                      </CTA>
-                    ) : (
-                      <div className="bottom-action">
-                        <p className="helper">이번 일정은 관전 중이에요.</p>
-                      </div>
-                    )}
-                  </>
-                )}
-                {room.stage === 'tie' && (
-                  <main>
-                    <div className="result-icon">🤔</div>
-                    <Heading
-                      title={
-                        room.tied?.length
-                          ? '친구들의 마음이\n반반으로 나뉘었어요'
-                          : '다시 고를 지역이 없어요'
-                      }
-                      desc={
-                        room.tied?.length
-                          ? '한 번 더 골라 볼까요, 운에 맡겨 볼까요?'
-                          : '방장이 일정을 변경해 날짜와 지역을 다시 정할 수 있어요.'
-                      }
-                    />
-                    <div className="tie-options">
-                      {room.tied?.map((r) => (
-                        <div key={r}>
-                          <MapPin />
-                          <b>{r}</b>
-                        </div>
-                      ))}
-                    </div>
-                    {host && !!room.tied?.length ? (
-                      <>
-                        <button
-                          className="primary"
-                          onClick={async () => {
-                            if (
-                              !(await send({ type: 'runoff', roomId: room.id }))
-                            )
-                              return;
-                          }}
-                        >
-                          한 번 더 투표하기
-                        </button>
-                        <button
-                          className="secondary full"
-                          onClick={async () => {
-                            if (
-                              !(await send({ type: 'random', roomId: room.id }))
-                            )
-                              return;
-                            notify('만날 지역이 정해졌어요!');
-                          }}
-                        >
-                          <Sparkles size={18} /> 무작위로 정하기
-                        </button>
-                      </>
-                    ) : !host && (
-                      <p className="helper">
-                        방장이 다음 방법을 선택하고 있어요.
-                      </p>
-                    )}
-                  </main>
-                )}
-                {room.stage === 'final' && (
-                  <main>
-                    <div className="celebrate">
-                      <PartyPopper size={38} />
-                      <span>우리 약속, 준비 완료</span>
-                    </div>
-                    <Heading title="그날, 여기서 만나요!" />
-                    <div className="ticket">
-                      <div className="ticket-top">
-                        <span>OUR NEXT MEETUP</span>
-                        <Heart size={18} />
-                      </div>
-                      <h2>{room.title}</h2>
-                      <div>
-                        <CalendarDays />
-                        <p>
-                          <small>언제</small>
-                          <b>
-                            {labelDate(room.date!.split('|')[0])} ·{' '}
-                            {room.date!.split('|')[1]}
-                          </b>
-                        </p>
-                      </div>
-                      <div>
-                        <MapPin />
-                        <p>
-                          <small>어디서</small>
-                          <b>{room.region}</b>
-                        </p>
-                      </div>
-                      <div className="ticket-people">
-                        {avatars(room.attendees)}
-                        <span>{room.attendees.length}명이 함께해요</span>
-                      </div>
-                    </div>
-                    <button
-                      className="secondary full"
-                      onClick={() =>
-                        share(
-                          `${room.title}\n${labelDate(room.date!.split('|')[0])} ${room.date!.split('|')[1]} · ${room.region}\n${window.location.origin}/?join=${room.code}`,
-                        )
-                      }
-                    >
-                      <Copy size={17} /> 약속 공유하기
-                    </button>
-                    <div className="section-head links-title">
-                      <h2>여기 어때요?</h2>
-                      <span>가고 싶은 곳을 모아봐요</span>
-                    </div>
-                    <div className="tabs">
-                      {(['food', 'cafe'] as const).map((c) => (
-                        <button
-                          key={c}
-                          className={category === c ? 'active' : ''}
-                          onClick={() => setCategory(c)}
-                        >
-                          {c === 'food' ? (
-                            <Utensils size={17} />
-                          ) : (
-                            <Coffee size={17} />
-                          )}{' '}
-                          {c === 'food' ? '음식점' : '카페'}{' '}
-                          <span>
-                            {room.links.filter((l) => l.category === c).length}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                    {room.links
-                      .filter((l) => l.category === category)
-                      .map((l) => (
-                        <div className="place-card" key={l.id}>
-                          <span className="place-icon">
-                            {category === 'food' ? '🍽️' : '☕'}
-                          </span>
-                          <a
-                            href={l.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <b>{l.name || new URL(l.url).hostname}</b>
-                            <p>
-                              {new URL(l.url).hostname}{' '}
-                              <ChevronRight size={13} />
-                            </p>
-                          </a>
-                          {(host || l.author === user) && (
-                            <button
-                              className="icon-button"
-                              aria-label="링크 삭제"
-                              onClick={() =>
-                                send({
-                                  type: 'deleteLink',
-                                  roomId: room.id,
-                                  id: l.id,
-                                })
-                              }
-                            >
-                              <X size={16} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    {!room.links.some((l) => l.category === category) && (
-                      <div className="empty-links">
-                        <Link2 size={26} />
-                        <b>첫 번째 장소를 추천해 주세요</b>
-                        <p>지도나 소개 페이지 링크면 충분해요.</p>
-                      </div>
-                    )}
-                    <button
-                      className="add-region"
-                      onClick={(event) => setSheet('link', event.currentTarget)}
-                    >
-                      <Plus size={18} />{' '}
-                      {category === 'food' ? '음식점' : '카페'} 링크 추가
-                    </button>
-                    <p className="expiration">
-                      이 모임은{' '}
-                      {labelDate(addDays(room.date!.split('|')[0], 2))} 00:00에
-                      사라져요.
-                    </p>
-                  </main>
-                )}
-              </>
+          <RoomView
+            room={room}
+            user={user}
+            host={host}
+            busy={busy}
+            expired={expired(room)}
+            onHome={() => setView('home')}
+            onReopenDate={reopenDate}
+          >
+            {room.stage === 'schedule' && (
+              <ScheduleView
+                room={room}
+                user={user}
+                today={today}
+                month={month}
+                chosen={chosen}
+                selected={selected}
+                showScheduleResults={showScheduleResults}
+                onMonthChange={setMonth}
+                onChosenChange={setChosen}
+                onSelectedChange={setSelected}
+                onEditSchedule={() => {
+                  setSelected(room.responses[user] || []);
+                  setEditingSchedule(true);
+                }}
+                onSubmit={submit}
+                onOpenSheet={setSheet}
+              />
             )}
-          </>
+            {room.stage === 'date' && dateCandidates && (
+              <DateView
+                room={room}
+                host={host}
+                today={today}
+                dateCandidates={dateCandidates}
+                customDate={customDate}
+                onCustomDateChange={setCustomDate}
+                onShowMore={() => setExpandedDateContext(dateContext)}
+                onConfirmDate={confirmDate}
+              />
+            )}
+            {room.stage === 'confirm' && (
+              <ConfirmView
+                room={room}
+                user={user}
+                host={host}
+                busy={busy}
+                onConfirm={confirmAttendance}
+                onReopenDate={reopenDate}
+              />
+            )}
+            {room.stage === 'region' && (
+              <RegionView
+                room={room}
+                user={user}
+                regionVotes={regionVotes}
+                validVote={validRegionVote(room, user, regionVotes)}
+                onVotesChange={setRegionVotes}
+                onVote={vote}
+                onOpenSheet={setSheet}
+              />
+            )}
+            {room.stage === 'tie' && (
+              <TieView
+                room={room}
+                host={host}
+                onRunoff={runoff}
+                onRandom={random}
+              />
+            )}
+            {room.stage === 'final' && (
+              <FinalView
+                room={room}
+                user={user}
+                host={host}
+                category={category}
+                onCategoryChange={setCategory}
+                onDeleteLink={deleteLink}
+                onShare={share}
+                onOpenSheet={setSheet}
+              />
+            )}
+          </RoomView>
         )}
         {toast && (
           <output className="toast">
@@ -1521,304 +624,29 @@ export default function Home() {
             {toast}
           </output>
         )}
-        {sheet && (
-          <dialog
-            ref={dialogRef}
-            className="sheet"
-            aria-labelledby="sheet-title"
-            onCancel={(event) => {
-              event.preventDefault();
-              setSheet(null);
-            }}
-          >
-            <div className="sheet-handle" />
-            <button
-              className="sheet-close icon-button"
-              aria-label="닫기"
-              onClick={() => setSheet(null)}
-            >
-              <X />
-            </button>
-            {sheet === 'members' && room && (
-              <>
-                <h2 id="sheet-title">함께하는 친구들</h2>
-                <p>
-                  {room.members.length}명 입장 · 총 {room.size}명
-                </p>
-                {room.members.map((m, i) => (
-                  <div className="member-row" key={m}>
-                    <Avatar name={m} index={i} />
-                    <b>{m}</b>
-                    {room.host === m && <span className="tag blue">방장</span>}
-                  </div>
-                ))}
-                <button className="primary" onClick={() => setSheet('invite')}>
-                  <Link2 size={18} /> 친구 초대하기
-                </button>
-              </>
-            )}
-            {sheet === 'attendees' && room && (
-              <>
-                <h2 id="sheet-title">{labelDate(chosen)} 가능한 친구</h2>
-                {['점심', '저녁'].map((s) => (
-                  <div className="attendee-row" key={s}>
-                    <b>{s}</b>
-                    <p>
-                      {room.members
-                        .filter((m) =>
-                          room.responses[m]?.includes(chosen + '|' + s),
-                        )
-                        .join(', ') || '아직 제출한 친구가 없어요'}
-                    </p>
-                  </div>
-                ))}
-              </>
-            )}
-            {sheet === 'invite' && room && (
-              <>
-                <div className="sheet-symbol">
-                  <Users />
-                </div>
-                <h2 id="sheet-title">친구들과 함께 정해요</h2>
-                <p>아래 코드를 친구들에게 알려주세요.</p>
-                <div className="invite-code">{room.code}</div>
-                <p className="helper">
-                  링크를 받은 친구는 닉네임과 PIN으로 참여할 수 있어요.
-                </p>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(
-                        window.location.origin + '/?join=' + room.code,
-                      );
-                      notify('초대 링크를 복사했어요.');
-                    } catch {
-                      notify('코드를 직접 선택해 복사해 주세요.');
-                    }
-                  }}
-                >
-                  <Copy size={18} /> 초대 링크 복사하기
-                </button>
-              </>
-            )}
-            {sheet === 'addRegion' && room && (
-              <>
-                <h2 id="sheet-title">어디에서 만나고 싶나요?</h2>
-                <label className="field">
-                  지역 이름
-                  <input
-                    autoFocus
-                    ref={sheetInputRef}
-                    maxLength={25}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="예: 여의도, 문래"
-                  />
-                </label>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    if (!input.trim()) return setError('지역을 입력해 주세요.');
-                    if (room.regions.includes(input.trim()))
-                      return setError('이미 있는 지역이에요.');
-                    if (room.stage !== 'region' || room.round !== 1)
-                      return setError('1차 지역 투표가 마감되어 추가할 수 없어요.');
-                    if (
-                      !(await send({
-                        type: 'region',
-                        roomId: room.id,
-                        name: input.trim(),
-                      }))
-                    )
-                      return;
-                    setSheet(null);
-                  }}
-                >
-                  후보 추가하기
-                </button>
-              </>
-            )}
-            {sheet === 'link' && room && (
-              <>
-                <h2 id="sheet-title">좋은 곳을 발견했나요?</h2>
-                <p>친구들에게 가고 싶은 곳을 알려주세요.</p>
-                <label className="field">
-                  링크
-                  <input
-                    autoFocus
-                    ref={sheetInputRef}
-                    type="url"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="https://map.naver.com/..."
-                  />
-                </label>
-                <label className="field">
-                  이름 <small>선택</small>
-                  <input
-                    value={linkName}
-                    onChange={(e) => setLinkName(e.target.value)}
-                    placeholder="장소 이름을 적어 주세요"
-                  />
-                </label>
-                <p className="helper">매장명 자동 가져오기는 연결 전이에요.</p>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    let url;
-                    try {
-                      url = new URL(input);
-                      if (!['http:', 'https:'].includes(url.protocol))
-                        throw Error();
-                    } catch {
-                      return setError(
-                        '올바른 http 또는 https 링크를 입력해 주세요.',
-                      );
-                    }
-                    if (
-                      room.links.some(
-                        (l) => l.url === url.href && l.category === category,
-                      )
-                    )
-                      return setError('이미 추가한 링크예요.');
-                    if (
-                      !(await send({
-                        type: 'addLink',
-                        roomId: room.id,
-                        url: url.href,
-                        name: linkName.trim(),
-                        category,
-                      }))
-                    )
-                      return;
-                    setSheet(null);
-                    setLinkName('');
-                    notify('링크를 추가했어요.');
-                  }}
-                >
-                  링크 추가하기
-                </button>
-              </>
-            )}
-            {sheet === 'settings' && (
-              <>
-                <h2 id="sheet-title">
-                  {view === 'room' ? '모임 관리' : '내 계정'}
-                </h2>
-                {view === 'room' && room ? (
-                  <>
-                    <button
-                      className="menu-row"
-                      onClick={() => setSheet('invite')}
-                    >
-                      <Link2 />
-                      친구 초대
-                      <ChevronRight />
-                    </button>
-                    {host && (
-                      <>
-                        <h3 className="small-heading">친구 관리</h3>
-                        {room.members
-                          .filter((m) => m !== user)
-                          .map((m, i) => (
-                            <div className="member-row" key={m}>
-                              <Avatar name={m} index={i + 1} />
-                              <b>{m}</b>
-                              <button
-                                className="text-button"
-                                onClick={async () => {
-                                  if (
-                                    !(await send({
-                                      type: 'transfer',
-                                      roomId: room.id,
-                                      member: m,
-                                    }))
-                                  )
-                                    return;
-                                  setSheet(null);
-                                  notify(`${m}님에게 방장을 넘겼어요.`);
-                                }}
-                              >
-                                방장 넘기기
-                              </button>
-                              <button
-                                className="text-button danger"
-                                onClick={async () => {
-                                  if (
-                                    window.confirm(
-                                      `${m}님을 내보내고 표를 삭제할까요?`,
-                                    )
-                                  )
-                                    await removeMember(m);
-                                }}
-                              >
-                                내보내기
-                              </button>
-                            </div>
-                          ))}
-                        <button
-                          className="menu-row danger"
-                          onClick={async () => {
-                            if (window.confirm('모임을 종료할까요?')) {
-                              if (
-                                !(await send({ type: 'close', roomId: room.id }))
-                              )
-                                return;
-                              setSheet(null);
-                              setView('home');
-                            }
-                          }}
-                        >
-                          <X />
-                          모임 조기 종료
-                        </button>
-                      </>
-                    )}
-                    {!host && (
-                      <button
-                        className="menu-row danger"
-                        onClick={async () => {
-                          if (
-                            window.confirm(
-                              '모임에서 나갈까요? 제출한 표는 삭제돼요.',
-                            )
-                          )
-                            await removeMember(user);
-                        }}
-                      >
-                        <LogOut />
-                        모임 나가기
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <p>{user}님으로 이용 중이에요.</p>
-                    <button
-                      className="menu-row"
-                      onClick={async () => {
-                        if (!(await send({ type: 'logout' }))) return;
-                        setRooms([]);
-                        setUser('');
-                        setView('login');
-                        setSheet(null);
-                      }}
-                    >
-                      <LogOut />
-                      다른 닉네임으로 들어가기
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-            {error && (
-              <p className="error" role="alert">
-                {error}
-              </p>
-            )}
-          </dialog>
-        )}
+        <MeetingSheets
+          sheet={sheet}
+          room={room}
+          view={view}
+          user={user}
+          host={host}
+          chosen={chosen}
+          input={input}
+          linkName={linkName}
+          error={error}
+          dialogRef={dialogRef}
+          inputRef={sheetInputRef}
+          onOpenSheet={setSheet}
+          onInputChange={setInput}
+          onLinkNameChange={setLinkName}
+          onAddRegion={addRegion}
+          onAddLink={addLink}
+          onTransfer={transfer}
+          onRemoveMember={removeMember}
+          onCloseRoom={closeRoom}
+          onLogout={logout}
+          onCopyInvite={copyInvite}
+        />
       </div>
     </>
   );

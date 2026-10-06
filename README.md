@@ -63,7 +63,10 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 
 ## 코드 위치
 
-- `app/page.tsx`: 화면·서버 동기화 및 인터랙션
+- `app/page.tsx`: 화면 조합·입력 초안·명시적 액션 호출·성공 후 이동·오류/토스트·시트 포커스
+- `components/meeting/`: 홈·로그인·생성·참가 화면, 모임 단계별 화면과 공통 표시 요소. `meeting-sheets.tsx`는 공통 dialog와 여섯 종류의 시트 내용을 담당
+- `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·저장 중 상태와 `pending`/`generation` 동시성 제어
+- `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
 - `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
 - `lib/meeting-contract.ts`: 화면·서버·테스트가 공유하는 액션별 요청과 응답 타입
@@ -72,6 +75,8 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `app/layout.tsx`: 한국어 문서·메타데이터
 
 화면은 변경하려는 동작을 명시적인 `/api/meeting` 액션으로 전송합니다. 모임 객체의 차이로 동작을 추론하거나 클라이언트에서 참석자·추첨 결과·링크 ID를 생성하지 않고 서버 응답을 반영합니다. 로그인은 사용자와 방 목록, 로그아웃은 빈 객체, 모임 변경은 방을 반환하며 본인 탈퇴의 `{ room: null }`은 정상 응답입니다.
+
+화면 컴포넌트는 필요한 값과 이름 있는 동작 콜백을 받습니다. API를 직접 호출하거나 서버 상태를 복제하지 않습니다. 입력 초안과 dialog/ref·포커스/스크롤 생명주기는 페이지에 남겨 화면 전환과 폴링 중에도 기존 동작을 유지합니다. 화면을 바꿀 때 동기화 훅을 다시 만들지 않으며, 초기/오류/저장 콜백은 안정적으로 유지하고 일반 조회 콜백은 화면·활성 모임이 바뀔 때만 변경합니다.
 
 공통 요청 타입은 정상 호출을 검사하기 위한 계약입니다. 서버는 요청을 `UnvalidatedAction`으로 받아 기존 필드·권한·상태 검증을 수행합니다. `manual` 생략 및 `regionRevision` 생략·`null`의 기존 처리는 유지하며, 화면의 참석 확인·투표는 현재 revision을 명시합니다. 테스트에서 의도적으로 잘못된 요청을 보낼 때는 `postRawAction()`을 사용합니다.
 
@@ -103,7 +108,7 @@ npm run test:e2e
 | `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
 | `npm run test:all` | 단위·API·브라우저 전체, 앱 빌드 한 번 |
 
-`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`, `sheet-focus.spec.ts`, `meeting-actions.spec.ts`는 실제 API/D1로 사용자 흐름·요청 payload·저장·바텀시트 포커스를 검사합니다. `timing.spec.ts`, `sheet-focus-mocked.spec.ts`, `meeting-actions-mocked.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경·저장 실패 후 입력과 포커스를 검증하며 D1 저장 검증을 대신하지 않습니다. `tests/meeting-contract.types.ts`의 요청·응답 계약 검사는 `npm run typecheck`에서 수행합니다.
+`npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`, `sheet-focus.spec.ts`, `meeting-actions.spec.ts`, `meeting-entry.spec.ts`는 실제 API/D1로 사용자 흐름·요청 payload·저장·바텀시트 포커스를 검사합니다. `timing.spec.ts`, `sheet-focus-mocked.spec.ts`, `meeting-actions-mocked.spec.ts`, `meeting-sync.spec.ts`, `meeting-schedule-sync.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경·저장 실패 후 입력과 포커스·초기 조회와 폴링 주기·저장 중 중복 요청 억제·일정 초안 유지를 검증하며 D1 저장 검증을 대신하지 않습니다. `tests/meeting-contract.types.ts`의 요청·응답 계약 검사는 `npm run typecheck`에서 수행합니다.
 
 API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
 
@@ -112,5 +117,7 @@ API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mj
 실패 시 `test-artifacts/server.log`, `test-results/`의 스크린샷·trace, `playwright-report/`의 HTML 보고서를 확인합니다. `npx playwright show-report`로 마지막 보고서를 열 수 있습니다. 결과물은 Git에서 제외됩니다. 테스트가 성공해도 서버 로그와 JSON 결과는 남으며 다음 실행에서 덮어씁니다.
 
 `.github/workflows/test.yml`은 PR 및 `main` 푸시에서 타입 검사·앱/테스트 린트·전체 테스트를 실행하고, 실패 자료를 7일간 보관합니다. 새 커밋은 같은 PR/브랜치의 이전 실행을 취소합니다. 테스트를 생성하는 작업이며 배포는 실행하지 않습니다.
+
+`npm run lint`는 앱과 새 통신 모듈·동기화 훅·`components/meeting/`을 함께 검사합니다. 시트 입력의 기존 `autoFocus`를 보존하기 위해 `meeting-sheets.tsx`에만 `no-autofocus` 예외를 적용하며, 실제 포커스는 페이지의 dialog 열림 처리와 브라우저 회귀 검사로 확인합니다.
 
 실제 실행 결과와 미검증 범위는 `VALIDATION.md`에 기록합니다. 복귀 이벤트를 합성한 검사는 실제 OS의 백그라운드 타이머 제한 검증과 구분합니다. 로컬 결과를 원격 CI·운영 DB·Vercel 게이트웨이·GA4·실제 배포 검증으로 간주하지 않습니다.

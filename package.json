@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "test": "node scripts/test.mjs",
-    "lint": "oxlint app lib/meeting.ts",
+    "lint": "oxlint app lib/meeting.ts lib/meeting-api.ts hooks/use-meeting-sync.ts components/meeting",
     "lint:all": "oxlint",
     "format": "oxfmt",
     "test:api": "playwright test --project=api",
