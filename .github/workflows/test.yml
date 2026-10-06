@@ -25,8 +25,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run lint:tests
+      - run: npm run lint:all
       - run: npm run test:all
       - name: Keep failure diagnostics
         if: failure()
