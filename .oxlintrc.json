@@ -29,6 +29,14 @@
     "build/**",
     "dist/**",
     "coverage/**",
+    ".wrangler/**",
+    ".vercel-static/**",
+    "test-artifacts/**",
+    "test-results/**",
+    "playwright-report/**",
+    "playwright/.auth/**",
+    "outputs/**",
+    "work/**",
     "next-env.d.ts"
   ],
   "rules": {

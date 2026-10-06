@@ -78,6 +78,8 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 
 화면 컴포넌트는 필요한 값과 이름 있는 동작 콜백을 받습니다. API를 직접 호출하거나 서버 상태를 복제하지 않습니다. 입력 초안과 dialog/ref·포커스/스크롤 생명주기는 페이지에 남겨 화면 전환과 폴링 중에도 기존 동작을 유지합니다. 화면을 바꿀 때 동기화 훅을 다시 만들지 않으며, 초기/오류/저장 콜백은 안정적으로 유지하고 일반 조회 콜백은 화면·활성 모임이 바뀔 때만 변경합니다.
 
+실제 UI는 `components/meeting/`과 `app/globals.css`로 구성합니다. 앱에서 사용하지 않던 `components/ui/`의 60개 템플릿, 전용 `hooks/use-mobile.ts`·`lib/utils.ts`, shadcn 생성 설정 `components.json`과 관련 직접 의존성 14개는 제거했습니다. React·Vinext·Lucide 및 현재 CSS를 처리하는 Tailwind/PostCSS는 유지합니다. Tailwind의 소스 탐색 대상이 줄어들어 생성 CSS는 달라질 수 있습니다.
+
 공통 요청 타입은 정상 호출을 검사하기 위한 계약입니다. 서버는 요청을 `UnvalidatedAction`으로 받아 기존 필드·권한·상태 검증을 수행합니다. `manual` 생략 및 `regionRevision` 생략·`null`의 기존 처리는 유지하며, 화면의 참석 확인·투표는 현재 revision을 명시합니다. 테스트에서 의도적으로 잘못된 요청을 보낼 때는 `postRawAction()`을 사용합니다.
 
 ## 자동 테스트
@@ -86,8 +88,7 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 npm ci
 npx playwright install chromium
 npm run typecheck
-npm run lint
-npm run lint:tests
+npm run lint:all
 npm run test:all
 ```
 
@@ -103,6 +104,9 @@ npm run test:e2e
 
 | 명령 | 검사 범위 |
 | --- | --- |
+| `npm run lint` | `oxlint app api components hooks lib`: 앱·게이트웨이·화면·훅·공통 로직 |
+| `npm run lint:tests` | `oxlint tests`: 테스트 코드 |
+| `npm run lint:all` | `oxlint .`: 위 범위와 스크립트·설정 파일을 포함한 저장소 전체 |
 | `npm test` | 기존 Node 내장 러너의 단위 테스트 41개 |
 | `npm run test:api` | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장 |
 | `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
@@ -116,8 +120,8 @@ API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mj
 
 실패 시 `test-artifacts/server.log`, `test-results/`의 스크린샷·trace, `playwright-report/`의 HTML 보고서를 확인합니다. `npx playwright show-report`로 마지막 보고서를 열 수 있습니다. 결과물은 Git에서 제외됩니다. 테스트가 성공해도 서버 로그와 JSON 결과는 남으며 다음 실행에서 덮어씁니다.
 
-`.github/workflows/test.yml`은 PR 및 `main` 푸시에서 타입 검사·앱/테스트 린트·전체 테스트를 실행하고, 실패 자료를 7일간 보관합니다. 새 커밋은 같은 PR/브랜치의 이전 실행을 취소합니다. 테스트를 생성하는 작업이며 배포는 실행하지 않습니다.
+`.github/workflows/test.yml`은 PR 및 `main` 푸시에서 타입 검사·`npm run lint:all`·전체 테스트를 실행하고, 실패 자료를 7일간 보관합니다. 새 커밋은 같은 PR/브랜치의 이전 실행을 취소합니다. 테스트를 생성하는 작업이며 배포는 실행하지 않습니다.
 
-`npm run lint`는 앱과 새 통신 모듈·동기화 훅·`components/meeting/`을 함께 검사합니다. 시트 입력의 기존 `autoFocus`를 보존하기 위해 `meeting-sheets.tsx`에만 `no-autofocus` 예외를 적용하며, 실제 포커스는 페이지의 dialog 열림 처리와 브라우저 회귀 검사로 확인합니다.
+부분 린트는 변경 범위를 빠르게 확인할 때 사용하고, 최종 검증에서는 스크립트·설정까지 포함하는 `npm run lint:all`을 실행합니다. 빌드·테스트 결과물과 로컬 도구 상태는 `.oxlintrc.json`에서 제외합니다. 시트 입력의 기존 `autoFocus`를 보존하기 위해 `meeting-sheets.tsx`에만 `no-autofocus` 예외를 적용하며, 실제 포커스는 페이지의 dialog 열림 처리와 브라우저 회귀 검사로 확인합니다.
 
 실제 실행 결과와 미검증 범위는 `VALIDATION.md`에 기록합니다. 복귀 이벤트를 합성한 검사는 실제 OS의 백그라운드 타이머 제한 검증과 구분합니다. 로컬 결과를 원격 CI·운영 DB·Vercel 게이트웨이·GA4·실제 배포 검증으로 간주하지 않습니다.
