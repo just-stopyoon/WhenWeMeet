@@ -265,14 +265,14 @@ test('로그인과 로그아웃 실패는 기존 세션을 유지하고 성공�
       });
   });
   await page.goto('/');
-  const nickname = page.getByLabel('닉네임', { exact: true });
-  const pin = page.getByLabel('숫자 4자리 PIN', { exact: true });
-  const start = page.getByRole('button', { name: '시작하기', exact: true });
+  const nickname = page.getByLabel('아이디', { exact: true });
+  const pin = page.getByLabel('숫자 4자리 비밀번호', { exact: true });
+  const start = page.getByRole('button', { name: '로그인', exact: true });
   await nickname.fill(user);
   await pin.fill('1234');
   await submitAndWait(page, () => start.click(), login, 400);
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    '어떻게 불러드릴까요?',
+    '우리 언제 만날까요?',
   );
   await expect(nickname).toHaveValue(user);
   await expect(pin).toHaveValue('1234');
@@ -292,7 +292,7 @@ test('로그인과 로그아웃 실패는 기존 세션을 유지하고 성공�
   await page.getByRole('button', { name: '설정', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '내 계정', exact: true });
   const signOut = dialog.getByRole('button', {
-    name: '다른 닉네임으로 들어가기',
+    name: '로그아웃',
     exact: true,
   });
   await submitAndWait(page, () => signOut.click(), logout, 400);
@@ -310,7 +310,7 @@ test('로그인과 로그아웃 실패는 기존 세션을 유지하고 성공�
   await submitAndWait(page, () => signOut.click(), logout, 200);
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    '어떻게 불러드릴까요?',
+    '우리 언제 만날까요?',
   );
   await expect(roomCard).toHaveCount(0);
   await expect(pin).toHaveValue('');
@@ -355,7 +355,7 @@ test('인증된 초대 진입은 초기 GET 시작 시 캡처한 코드를 응�
   await expect(
     page.getByRole('button', { name: '모임 참가하기', exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel('닉네임', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('아이디', { exact: true })).toHaveCount(0);
   expect(held).toHaveLength(1);
   expect(posts).toEqual([]);
 });

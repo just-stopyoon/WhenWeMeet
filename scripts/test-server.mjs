@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -136,6 +136,30 @@ async function execute() {
       { cause: built.error },
     );
   active = undefined;
+  // Apply schema migrations to this run's isolated local database only.
+  for (const file of (await readdir(join(root, 'drizzle')))
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    launch(process.execPath, [
+      join(root, 'node_modules/wrangler/bin/wrangler.js'),
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      '--config',
+      'dist/server/wrangler.json',
+      '--persist-to',
+      join(temporary, 'state'),
+      '--file',
+      join(root, 'drizzle', file),
+    ]);
+    const migrated = await Promise.race([activeClosed, aborted()]);
+    if (migrated.code !== 0)
+      throw new Error(
+        'Local test database migration failed. See test-artifacts/server.log.',
+      );
+    active = undefined;
+  }
   // Check again after the build so a newly occupied port cannot be reused.
   await requireFreePort();
   const child = launch(

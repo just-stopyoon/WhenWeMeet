@@ -402,10 +402,7 @@ test('별도 세션의 로그아웃은 로그인 제목으로 이동하고 공�
   await page.getByRole('button', { name: '설정', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveAccessibleName('내 계정');
   await uiAction(page, 'logout', () =>
-    page
-      .getByRole('dialog')
-      .getByRole('button', { name: '다른 닉네임으로 들어가기' })
-      .click(),
+    page.getByRole('dialog').getByRole('button', { name: '로그아웃' }).click(),
   );
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const heading = page.getByRole('heading', { level: 1 });

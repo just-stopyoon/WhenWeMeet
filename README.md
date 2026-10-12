@@ -17,8 +17,8 @@ npm run dev
 
 ## 체험 순서
 
-1. 닉네임과 숫자 4자리 PIN으로 입장합니다. 처음 쓰는 닉네임은 계정이 생성됩니다.
-2. 모임 이름, 고정 정원(2~10명), 7~31일의 기간을 정합니다.
+1. 회원가입에서 고유한 아이디, 닉네임(중복 가능), 숫자 4자리 비밀번호를 입력합니다. 이후에는 아이디와 비밀번호로 로그인합니다.
+2. 모임 이름, 고정 정원(2~~10명), 7~~31일의 기간을 정합니다.
 3. 친구 초대에서 링크를 복사해 전달합니다. 친구는 자신의 기기에서 로그인 후 참가합니다.
 4. 각자 달력의 점심·저녁을 선택해 제출합니다. 설정 인원 전원 제출 시 마감됩니다.
 5. 방장이 날짜·시간대를 확정하고 참석자들이 지역에 투표합니다.
@@ -45,6 +45,7 @@ npm run dev
 날짜는 한국 시간 기준입니다. 약속일 다다음날 00:00부터 접근할 수 없으며 이후 첫 API 요청에서 만료된 방을 삭제합니다. 무접속 상태에서 정확히 00:00에 물리 삭제하는 예약 작업은 아직 없습니다. 개발 DB는 `.wrangler` 아래 로컬 저장소로, 배포 DB와 분리됩니다. `drizzle/0000_shared_rooms.sql`은 배포용 초기 스키마이며 로컬 API도 동일 테이블을 준비합니다.
 
 현재 미정 정책의 체험 가정:
+
 - 집계 이후 방장이 최종 날짜·시간대를 확인합니다.
 - 후보 외 날짜 참석 재확인은 현재 활성 멤버 전원 기준입니다.
 - 참석 재확인 중에도 방장이 날짜를 다시 선택할 수 있습니다. 참석자가 2명 미만이면 응답 결과와 안내를 유지하며, 방장이 재선택할 때 기존 가능 일정·지역 후보를 보존하고 참석 확인·지역 투표만 초기화합니다.
@@ -102,15 +103,15 @@ npm run test:api
 npm run test:e2e
 ```
 
-| 명령 | 검사 범위 |
-| --- | --- |
-| `npm run lint` | `oxlint app api components hooks lib`: 앱·게이트웨이·화면·훅·공통 로직 |
-| `npm run lint:tests` | `oxlint tests`: 테스트 코드 |
-| `npm run lint:all` | `oxlint .`: 위 범위와 스크립트·설정 파일을 포함한 저장소 전체 |
-| `npm test` | 기존 Node 내장 러너의 단위 테스트 41개 |
-| `npm run test:api` | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장 |
-| `npm run test:e2e` | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
-| `npm run test:all` | 단위·API·브라우저 전체, 앱 빌드 한 번 |
+| 명령                 | 검사 범위                                                              |
+| -------------------- | ---------------------------------------------------------------------- |
+| `npm run lint`       | `oxlint app api components hooks lib`: 앱·게이트웨이·화면·훅·공통 로직 |
+| `npm run lint:tests` | `oxlint tests`: 테스트 코드                                            |
+| `npm run lint:all`   | `oxlint .`: 위 범위와 스크립트·설정 파일을 포함한 저장소 전체          |
+| `npm test`           | 기존 Node 내장 러너의 단위 테스트 41개                                 |
+| `npm run test:api`   | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장              |
+| `npm run test:e2e`   | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
+| `npm run test:all`   | 단위·API·브라우저 전체, 앱 빌드 한 번                                  |
 
 `npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`, `sheet-focus.spec.ts`, `meeting-actions.spec.ts`, `meeting-entry.spec.ts`는 실제 API/D1로 사용자 흐름·요청 payload·저장·바텀시트 포커스를 검사합니다. `timing.spec.ts`, `sheet-focus-mocked.spec.ts`, `meeting-actions-mocked.spec.ts`, `meeting-sync.spec.ts`, `meeting-schedule-sync.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경·저장 실패 후 입력과 포커스·초기 조회와 폴링 주기·저장 중 중복 요청 억제·일정 초안 유지를 검증하며 D1 저장 검증을 대신하지 않습니다. `tests/meeting-contract.types.ts`의 요청·응답 계약 검사는 `npm run typecheck`에서 수행합니다.
 
@@ -125,3 +126,22 @@ API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mj
 부분 린트는 변경 범위를 빠르게 확인할 때 사용하고, 최종 검증에서는 스크립트·설정까지 포함하는 `npm run lint:all`을 실행합니다. 빌드·테스트 결과물과 로컬 도구 상태는 `.oxlintrc.json`에서 제외합니다. 시트 입력의 기존 `autoFocus`를 보존하기 위해 `meeting-sheets.tsx`에만 `no-autofocus` 예외를 적용하며, 실제 포커스는 페이지의 dialog 열림 처리와 브라우저 회귀 검사로 확인합니다.
 
 실제 실행 결과와 미검증 범위는 `VALIDATION.md`에 기록합니다. 복귀 이벤트를 합성한 검사는 실제 OS의 백그라운드 타이머 제한 검증과 구분합니다. 로컬 결과를 원격 CI·운영 DB·Vercel 게이트웨이·GA4·실제 배포 검증으로 간주하지 않습니다.
+
+## 계정과 디자인 변경 (2026-10-12)
+
+- 아이디는 NFC 정규화 및 앞뒤 공백 제거 후 1~20자, 대소문자를 구분합니다. 기존 계정의 닉네임이 그대로 아이디와 표시 이름이 됩니다.
+- 닉네임은 1~20자이며 중복 가능합니다. 동일 모임에 중복 닉네임이 있으면 아이디를 함께 표시합니다.
+- 비밀번호는 0으로 시작해도 되는 숫자 4자리입니다. 다른 계정과 같은 비밀번호도 허용하며 기존 PBKDF2 해시와 로그인 시도 제한을 유지합니다.
+- 로그인은 계정을 생성하지 않습니다. 회원가입은 고유 아이디 제약과 트랜잭션으로 동시 중복 가입을 차단합니다.
+- 기존 accounts.name, 세션, 모임의 멤버/방장/응답 키는 변경하지 않습니다. account_profiles는 표시용 닉네임만 저장하며 기존 프로필이 없는 계정은 아이디를 표시합니다.
+- Pretendard v1.3.9, 행간 150%, 자간 -0.025em. 타이틀 700 / 소제목·버튼 600 / 본문·placeholder 500 / 입력값 600.
+- public/app-logo.png는 사용자가 제공한 로고이며 로그인 화면, 상단 브랜드, 브라우저·홈화면 아이콘에 사용합니다.
+
+신규 DB와 로컬 미리보기에는 기존 SQL에 이어 `drizzle/0001_account_profiles.sql`을 적용해야 합니다. Sites는 배포 시 추가 마이그레이션을 적용합니다. 로컬 빌드 후에는 다음과 같이 적용합니다(운영 DB 옵션을 사용하지 않습니다).
+
+```sh
+npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0000_shared_rooms.sql
+npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0001_account_profiles.sql
+```
+
+`npm run test:all`은 별도 임시 D1에 마이그레이션을 적용합니다. 이메일 및 푸시 알림은 이 변경에 포함하지 않습니다.

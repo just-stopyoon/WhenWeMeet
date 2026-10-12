@@ -1,4 +1,5 @@
 'use client';
+import Image from 'next/image';
 import {
   useState,
   useEffect,
@@ -13,7 +14,7 @@ import {
   Check,
   MoreHorizontal,
 } from 'lucide-react';
-import { addDays, type Room } from '../lib/meeting';
+import { addDays, memberLabel, type Room } from '../lib/meeting';
 import {
   dateCandidateView,
   reconcileRegionVoteDraft,
@@ -39,6 +40,8 @@ import { FinalView } from '../components/meeting/final-view';
 import { MeetingSheets } from '../components/meeting/meeting-sheets';
 
 export default function Home() {
+  const [signup, setSignup] = useState(false);
+  const [accountId, setAccountId] = useState('');
   const today = useKoreanToday();
   const [view, changeView] = useState<View>('home'),
     [active, setActive] = useState('demo');
@@ -106,15 +109,23 @@ export default function Home() {
     setError(message);
     setToast(message);
   }, []);
-  const { ready, user, rooms, busy, send, replaceSession, clearSession } =
-    useMeetingSync({
-      onInitialLoad,
-      onRefresh,
-      onInitialError,
-      onPollError,
-      onSaveStart,
-      onSaveError,
-    });
+  const {
+    ready,
+    user,
+    nickname,
+    rooms,
+    busy,
+    send,
+    replaceSession,
+    clearSession,
+  } = useMeetingSync({
+    onInitialLoad,
+    onRefresh,
+    onInitialError,
+    onPollError,
+    onSaveStart,
+    onSaveError,
+  });
   const sheetContext = JSON.stringify([
     user,
     view,
@@ -227,7 +238,11 @@ export default function Home() {
     setView('room');
   }
   async function login() {
-    const data = await send({ type: 'login', name: nick.trim(), pin });
+    const data = await send(
+      signup
+        ? { type: 'signup', name: accountId.trim(), nickname: nick.trim(), pin }
+        : { type: 'login', name: accountId.trim(), pin },
+    );
     if (!data) return;
     replaceSession(data);
     setPin('');
@@ -289,7 +304,7 @@ export default function Home() {
       !window.confirm(
         n === user
           ? '모임에서 나갈까요? 제출한 표는 삭제돼요.'
-          : `${n}님을 내보내고 표를 삭제할까요?`,
+          : `${memberLabel(room, n)}님을 내보내고 표를 삭제할까요?`,
       )
     )
       return;
@@ -397,7 +412,7 @@ export default function Home() {
     if (!room || !(await send({ type: 'transfer', roomId: room.id, member })))
       return;
     setSheet(null);
-    notify(`${member}님에게 방장을 넘겼어요.`);
+    notify(`${memberLabel(room, member)}님에게 방장을 넘겼어요.`);
   }
   async function closeRoom() {
     if (!room || !window.confirm('모임을 종료할까요?')) return;
@@ -455,7 +470,13 @@ export default function Home() {
           >
             {view === 'home' || view === 'login' ? (
               <span className="brand-mini">
-                <CalendarDays size={20} />
+                <Image
+                  unoptimized
+                  src="/app-logo.png"
+                  alt=""
+                  width={34}
+                  height={34}
+                />
               </span>
             ) : (
               <ArrowLeft size={23} />
@@ -476,21 +497,21 @@ export default function Home() {
             onClick={(event) =>
               user
                 ? setSheet('settings', event.currentTarget)
-                : notify('닉네임으로 시작해 보세요.')
+                : notify('로그인하거나 회원가입해 주세요.')
             }
           >
             {view === 'room' ? (
               <MoreHorizontal />
             ) : (
               <span className="profile-dot">
-                {user ? user[0] : <Users size={17} />}
+                {user ? nickname[0] : <Users size={17} />}
               </span>
             )}
           </button>
         </header>
         {view === 'home' && (
           <HomeView
-            user={user}
+            user={nickname}
             today={today}
             rooms={mine}
             onOpenRoom={openRoom}
@@ -500,6 +521,15 @@ export default function Home() {
         )}
         {view === 'login' && (
           <LoginView
+            signup={signup}
+            accountId={accountId}
+            busy={busy}
+            onIdChange={setAccountId}
+            onModeChange={() => {
+              setSignup(!signup);
+              setPin('');
+              setError('');
+            }}
             nick={nick}
             pin={pin}
             error={error}
@@ -629,6 +659,7 @@ export default function Home() {
           room={room}
           view={view}
           user={user}
+          nickname={nickname}
           host={host}
           chosen={chosen}
           input={input}

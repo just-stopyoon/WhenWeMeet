@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { CalendarDays, Check } from 'lucide-react';
-import type { Room } from '../../lib/meeting';
+import { memberLabel, type Room } from '../../lib/meeting';
 
 type RoomViewProps = {
   room: Room;
@@ -72,7 +72,7 @@ export function RoomView({
               <strong>이번 약속 참석자 · {room.attendees.length}명</strong>
               <p>
                 {room.attendees.length
-                  ? room.attendees.join(', ')
+                  ? room.attendees.map((id) => memberLabel(room, id)).join(', ')
                   : '참석 가능한 사람이 없어요.'}
               </p>
               {!room.attendees.includes(user) && (
