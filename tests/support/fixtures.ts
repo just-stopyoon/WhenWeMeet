@@ -63,11 +63,20 @@ export const test = base.extend<object, { accounts: Accounts }>({
           });
           contexts.push(request);
           const response = await request.post('/api/meeting', {
-            data: { type: 'login', name, pin } satisfies MeetingRequest,
+            data: {
+              type: 'signup',
+              name,
+              nickname: name,
+              pin,
+            } satisfies MeetingRequest,
           });
           expect(response.status(), 'Test account login failed.').toBe(200);
           const result = (await response.json()) as MeetingSnapshot;
-          expect(Object.keys(result).sort()).toEqual(['rooms', 'user']);
+          expect(Object.keys(result).sort()).toEqual([
+            'nickname',
+            'rooms',
+            'user',
+          ]);
           expect(result.user).toBe(name);
           expect(Array.isArray(result.rooms)).toBe(true);
           accounts.push({
@@ -109,7 +118,7 @@ export async function listRooms(account: TestAccount): Promise<Room[]> {
   const response = await account.request.get('/api/meeting');
   expect(response.status()).toBe(200);
   const result = (await response.json()) as MeetingSnapshot;
-  expect(Object.keys(result).sort()).toEqual(['rooms', 'user']);
+  expect(Object.keys(result).sort()).toEqual(['nickname', 'rooms', 'user']);
   expect(result.user).toBe(account.name);
   return result.rooms;
 }

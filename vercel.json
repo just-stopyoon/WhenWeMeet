@@ -6,8 +6,21 @@
   "outputDirectory": ".vercel-static",
   "rewrites": [
     { "source": "/", "destination": "/api/gateway?path=/" },
-    { "source": "/api/meeting", "destination": "/api/gateway?path=/api/meeting" },
-    { "source": "/_next/static/:path*", "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/_next/static/:path*" },
-    { "source": "/favicon.svg", "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/favicon.svg" }
+    {
+      "source": "/api/meeting",
+      "destination": "/api/gateway?path=/api/meeting"
+    },
+    {
+      "source": "/_next/static/:path*",
+      "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/_next/static/:path*"
+    },
+    {
+      "source": "/app-logo.png",
+      "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/app-logo.png"
+    },
+    {
+      "source": "/favicon.svg",
+      "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/favicon.svg"
+    }
   ]
 }

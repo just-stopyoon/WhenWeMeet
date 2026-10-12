@@ -22,6 +22,8 @@ export type Room = {
   mode: 'all' | 'most';
   host: string;
   members: string[];
+  // Membership and permissions use account IDs; nicknames are display-only.
+  memberNames?: Record<string, string>;
   responses: Record<string, string[]>;
   stage:
     | 'schedule'
@@ -52,6 +54,15 @@ export type Room = {
 };
 export const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const memberName = (room: Room, id: string) =>
+  room.memberNames?.[id] ?? id;
+export function memberLabel(room: Room, id: string) {
+  const nickname = memberName(room, id);
+  return room.members.filter((member) => memberName(room, member) === nickname)
+    .length > 1
+    ? `${nickname} (${id})`
+    : nickname;
+}
 export function addDays(date: string, n: number) {
   const d = new Date(date + 'T12:00:00');
   d.setDate(d.getDate() + n);

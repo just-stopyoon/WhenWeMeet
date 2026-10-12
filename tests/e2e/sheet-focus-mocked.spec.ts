@@ -212,9 +212,9 @@ test('홈에서 계정 시트가 열린 채 세션을 잃으면 로그인 제목
 
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(
-    page.getByRole('heading', { level: 1, name: /어떻게 불러드릴까요/ }),
+    page.getByRole('heading', { level: 1, name: /우리 언제 만날까요/ }),
   ).toBeFocused();
-  await expect(page.getByLabel('닉네임', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('아이디', { exact: true })).toBeVisible();
   await expect(settings).not.toBeFocused();
 });
 

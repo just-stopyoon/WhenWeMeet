@@ -28,6 +28,7 @@ export function useMeetingSync({
 }: MeetingSyncOptions) {
   const [ready, setReady] = useState(false);
   const [user, setUser] = useState('');
+  const [nickname, setNickname] = useState('');
   const [rooms, setRooms] = useState<Room[]>([]);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -35,11 +36,13 @@ export function useMeetingSync({
 
   const replaceSession = useCallback((snapshot: MeetingSnapshot) => {
     setUser(snapshot.user);
+    setNickname(snapshot.nickname ?? snapshot.user);
     setRooms(snapshot.rooms);
   }, []);
   const clearSession = useCallback(() => {
     setRooms([]);
     setUser('');
+    setNickname('');
   }, []);
 
   const refresh = useCallback(async () => {
@@ -109,5 +112,14 @@ export function useMeetingSync({
     }
   }
 
-  return { ready, user, rooms, busy, send, replaceSession, clearSession };
+  return {
+    ready,
+    user,
+    nickname,
+    rooms,
+    busy,
+    send,
+    replaceSession,
+    clearSession,
+  };
 }

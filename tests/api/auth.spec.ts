@@ -39,7 +39,7 @@ test('로그인, 재접속, 로그아웃은 독립 세션에 반영된다', asyn
         },
       }),
       400,
-      /닉네임 또는 PIN/,
+      /아이디 또는 비밀번호/,
     );
     const login = await request.post('/api/meeting', {
       data: {

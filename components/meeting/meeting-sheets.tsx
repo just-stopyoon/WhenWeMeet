@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import { ChevronRight, Copy, Link2, LogOut, Users, X } from 'lucide-react';
-import { labelDate, type Room } from '../../lib/meeting';
+import { labelDate, memberLabel, type Room } from '../../lib/meeting';
 import type { OpenSheet, Sheet, View } from './types';
 import { Avatar } from './ui';
 
@@ -9,6 +9,7 @@ type MeetingSheetsProps = {
   room?: Room;
   view: View;
   user: string;
+  nickname?: string;
   host: boolean;
   chosen: string;
   input: string;
@@ -43,8 +44,8 @@ function MembersSheet({
       </p>
       {room.members.map((member, index) => (
         <div className="member-row" key={member}>
-          <Avatar name={member} index={index} />
-          <b>{member}</b>
+          <Avatar name={memberLabel(room, member)} index={index} />
+          <b>{memberLabel(room, member)}</b>
           {room.host === member && <span className="tag blue">방장</span>}
         </div>
       ))}
@@ -67,6 +68,7 @@ function AttendeesSheet({ room, chosen }: { room: Room; chosen: string }) {
               .filter((member) =>
                 room.responses[member]?.includes(chosen + '|' + slot),
               )
+              .map((id) => memberLabel(room, id))
               .join(', ') || '아직 제출한 친구가 없어요'}
           </p>
         </div>
@@ -91,7 +93,7 @@ function InviteSheet({
       <p>아래 코드를 친구들에게 알려주세요.</p>
       <div className="invite-code">{room.code}</div>
       <p className="helper">
-        링크를 받은 친구는 닉네임과 PIN으로 참여할 수 있어요.
+        링크를 받은 친구는 회원가입 또는 로그인 후 참여할 수 있어요.
       </p>
       <button className="primary" onClick={onCopyInvite}>
         <Copy size={18} /> 초대 링크 복사하기
@@ -181,6 +183,7 @@ function SettingsSheet({
   room,
   view,
   user,
+  nickname,
   host,
   onOpenSheet,
   onTransfer,
@@ -192,6 +195,7 @@ function SettingsSheet({
   | 'room'
   | 'view'
   | 'user'
+  | 'nickname'
   | 'host'
   | 'onOpenSheet'
   | 'onTransfer'
@@ -216,8 +220,11 @@ function SettingsSheet({
                 .filter((member) => member !== user)
                 .map((member, index) => (
                   <div className="member-row" key={member}>
-                    <Avatar name={member} index={index + 1} />
-                    <b>{member}</b>
+                    <Avatar
+                      name={memberLabel(room, member)}
+                      index={index + 1}
+                    />
+                    <b>{memberLabel(room, member)}</b>
                     <button
                       className="text-button"
                       onClick={() => onTransfer(member)}
@@ -250,10 +257,10 @@ function SettingsSheet({
         </>
       ) : (
         <>
-          <p>{user}님으로 이용 중이에요.</p>
+          <p>{nickname ?? user}님으로 이용 중이에요.</p>
           <button className="menu-row" onClick={onLogout}>
             <LogOut />
-            다른 닉네임으로 들어가기
+            로그아웃
           </button>
         </>
       )}
@@ -266,6 +273,7 @@ export function MeetingSheets({
   room,
   view,
   user,
+  nickname,
   host,
   chosen,
   input,
@@ -335,6 +343,7 @@ export function MeetingSheets({
           room={room}
           view={view}
           user={user}
+          nickname={nickname}
           host={host}
           onOpenSheet={onOpenSheet}
           onTransfer={onTransfer}

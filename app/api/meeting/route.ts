@@ -102,13 +102,45 @@ async function list(name: string) {
     )
     .bind(name, koreanToday())
     .all<{ data: string }>();
-  return result.results.map((row) => JSON.parse(row.data) as Room);
+  return Promise.all(
+    result.results.map((row) => withNames(JSON.parse(row.data) as Room)),
+  );
+}
+async function nicknameFor(id: string) {
+  const profile = await db()
+    .prepare('SELECT nickname FROM account_profiles WHERE account_id=?')
+    .bind(id)
+    .first<{ nickname: string }>();
+  return profile?.nickname ?? id;
+}
+async function withNames(room: Room): Promise<Room> {
+  const members = room.members;
+  if (!members.length) return { ...room, memberNames: {} };
+  const profiles = await db()
+    .prepare(
+      `SELECT account_id, nickname FROM account_profiles WHERE account_id IN (${members.map(() => '?').join(',')})`,
+    )
+    .bind(...members)
+    .all<{ account_id: string; nickname: string }>();
+  const names = new Map(
+    profiles.results.map((profile) => [profile.account_id, profile.nickname]),
+  );
+  return {
+    ...room,
+    memberNames: Object.fromEntries(
+      members.map((id) => [id, names.get(id) ?? id]),
+    ),
+  };
 }
 export async function GET(req: Request) {
   try {
     await initialize();
     const user = await currentUser(req);
-    return reply({ user: user || '', rooms: user ? await list(user) : [] });
+    return reply(
+      user
+        ? { user, nickname: await nicknameFor(user), rooms: await list(user) }
+        : { user: '', rooms: [] },
+    );
   } catch {
     return reply(
       { error: '모임을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.' },
@@ -126,7 +158,7 @@ export async function POST(req: Request) {
     // validation order below, including authentication before room-action checks.
     const a = JSON.parse(raw) as UnvalidatedAction;
     await initialize();
-    if (a.type === 'login') {
+    if (a.type === 'login' || a.type === 'signup') {
       const name =
         typeof a.name === 'string' ? a.name.normalize('NFC').trim() : '';
       if (
@@ -137,41 +169,67 @@ export async function POST(req: Request) {
         Object.hasOwn(Object.prototype, name) ||
         name === 'prototype'
       )
-        throw new Error('닉네임은 1~20자, PIN은 숫자 4자리로 입력해 주세요.');
+        throw new Error(
+          '아이디는 1~20자, 비밀번호는 숫자 4자리로 입력해 주세요.',
+        );
       await limit(
         'login-ip:' +
           (await digest(req.headers.get('cf-connecting-ip') || 'local')),
         50,
       );
       await limit('login-name:' + name, 10);
-      let account = await db()
+      if (a.type === 'signup') {
+        const nickname =
+          typeof a.nickname === 'string'
+            ? a.nickname.normalize('NFC').trim()
+            : '';
+        if (!nickname || nickname.length > 20)
+          throw new Error('닉네임은 1~20자로 입력해 주세요.');
+        const salt = crypto.randomUUID();
+        const hash = await pinHash(a.pin, salt);
+        try {
+          // One transaction: a duplicate ID cannot replace a profile or create a session.
+          await db().batch([
+            db()
+              .prepare('INSERT INTO accounts(name,salt,hash) VALUES(?,?,?)')
+              .bind(name, salt, hash),
+            db()
+              .prepare(
+                'INSERT INTO account_profiles(account_id,nickname) VALUES(?,?)',
+              )
+              .bind(name, nickname),
+          ]);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            /UNIQUE constraint failed: accounts\.name/.test(error.message)
+          )
+            return reply({ error: '이미 사용 중인 아이디예요.' }, 409);
+          throw error;
+        }
+      }
+      const account = await db()
         .prepare('SELECT salt, hash FROM accounts WHERE name=?')
         .bind(name)
         .first<{ salt: string; hash: string }>();
-      if (!account) {
-        const salt = crypto.randomUUID(),
-          hash = await pinHash(a.pin, salt);
-        await db()
-          .prepare(
-            'INSERT OR IGNORE INTO accounts(name,salt,hash) VALUES(?,?,?)',
-          )
-          .bind(name, salt, hash)
-          .run();
-        account = await db()
-          .prepare('SELECT salt, hash FROM accounts WHERE name=?')
-          .bind(name)
-          .first<{ salt: string; hash: string }>();
-      }
-      if ((await pinHash(a.pin, account!.salt)) !== account!.hash)
-        throw new Error('닉네임 또는 PIN을 확인해 주세요.');
+      if (!account || (await pinHash(a.pin, account.salt)) !== account.hash)
+        throw new Error('아이디 또는 비밀번호를 확인해 주세요.');
       const token = crypto.randomUUID() + crypto.randomUUID();
       await db()
         .prepare('INSERT INTO sessions(token,name,expires) VALUES(?,?,?)')
         .bind(await digest(token), name, Date.now() + 30 * 86400000)
         .run();
-      return reply({ user: name, rooms: await list(name) }, 200, {
-        'Set-Cookie': cookie(req, token, 30 * 86400),
-      });
+      return reply(
+        {
+          user: name,
+          nickname: await nicknameFor(name),
+          rooms: await list(name),
+        },
+        200,
+        {
+          'Set-Cookie': cookie(req, token, 30 * 86400),
+        },
+      );
     }
     const user = await currentUser(req);
     if (!user) return reply({ error: '다시 로그인해 주세요.' }, 401);
@@ -220,7 +278,7 @@ export async function POST(req: Request) {
         .prepare('INSERT INTO rooms(id,code,data,expires) VALUES(?,?,?,?)')
         .bind(r.id, r.code, JSON.stringify(r), expiresOn(r))
         .run();
-      return reply({ room: r });
+      return reply({ room: await withNames(r) });
     }
     for (let attempt = 0; attempt < 8; attempt++) {
       const row =
@@ -243,7 +301,11 @@ export async function POST(req: Request) {
         .bind(JSON.stringify(updated), expiresOn(updated), row.id, row.version)
         .run();
       if (result.meta.changes)
-        return reply({ room: updated.members.includes(user) ? updated : null });
+        return reply({
+          room: updated.members.includes(user)
+            ? await withNames(updated)
+            : null,
+        });
     }
     return reply(
       { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },

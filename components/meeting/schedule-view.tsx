@@ -6,7 +6,7 @@ import {
   Moon,
   Sun,
 } from 'lucide-react';
-import { iso, labelDate, type Room } from '../../lib/meeting';
+import { iso, labelDate, memberLabel, type Room } from '../../lib/meeting';
 import { isSelectableDate } from '../../lib/meeting-view';
 import type { OpenSheet } from './types';
 import { AvatarStack, CTA, Heading } from './ui';
@@ -62,7 +62,9 @@ export function ScheduleView({
           className="participation"
           onClick={(event) => onOpenSheet('members', event.currentTarget)}
         >
-          <AvatarStack names={room.members.slice(0, 4)} />
+          <AvatarStack
+            names={room.members.slice(0, 4).map((id) => memberLabel(room, id))}
+          />
           <span>
             <b>{Object.keys(room.responses).length}명 제출</b>
             <small>
@@ -206,7 +208,7 @@ export function ScheduleView({
                     </h4>
                     <p>
                       {people.length
-                        ? people.join(', ')
+                        ? people.map((id) => memberLabel(room, id)).join(', ')
                         : '제출한 친구 중 가능한 사람이 없어요.'}
                     </p>
                   </div>

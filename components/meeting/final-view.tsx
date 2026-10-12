@@ -11,7 +11,7 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { addDays, labelDate, type Room } from '../../lib/meeting';
+import { addDays, labelDate, memberLabel, type Room } from '../../lib/meeting';
 import type { LinkCategory, OpenSheet } from './types';
 import { AvatarStack, Heading } from './ui';
 
@@ -66,7 +66,9 @@ export function FinalView({
           </p>
         </div>
         <div className="ticket-people">
-          <AvatarStack names={room.attendees} />
+          <AvatarStack
+            names={room.attendees.map((id) => memberLabel(room, id))}
+          />
           <span>{room.attendees.length}명이 함께해요</span>
         </div>
       </div>

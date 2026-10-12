@@ -1,5 +1,5 @@
 import { CalendarDays, Check, ChevronRight, Plus } from 'lucide-react';
-import { labelDate, type Room } from '../../lib/meeting';
+import { labelDate, memberLabel, type Room } from '../../lib/meeting';
 import { AvatarStack, CTA, Heading } from './ui';
 
 type HomeViewProps = {
@@ -81,7 +81,9 @@ export function HomeView({
                 : `${labelDate(r.start)} – ${labelDate(r.end)}`}
             </p>
             <div className="card-bottom">
-              <AvatarStack names={r.members.slice(0, 4)} />
+              <AvatarStack
+                names={r.members.slice(0, 4).map((id) => memberLabel(r, id))}
+              />
               <span>
                 {r.stage === 'schedule'
                   ? `${Object.keys(r.responses).length} / ${r.size}명 제출`

@@ -4,6 +4,7 @@ import type { Room } from './meeting';
 // server's runtime checks; these types do not validate received JSON.
 export type MeetingRequest =
   | { type: 'login'; name: string; pin: string }
+  | { type: 'signup'; name: string; nickname: string; pin: string }
   | { type: 'logout' }
   | {
       type: 'create';
@@ -45,14 +46,21 @@ export type MeetingRequest =
     }
   | { type: 'deleteLink'; roomId: string; id: string };
 
-export type RoomRequest = Exclude<MeetingRequest, { type: 'login' | 'logout' }>;
-export type MeetingSnapshot = { user: string; rooms: Room[] };
+export type RoomRequest = Exclude<
+  MeetingRequest,
+  { type: 'login' | 'signup' | 'logout' }
+>;
+export type MeetingSnapshot = {
+  user: string;
+  nickname?: string;
+  rooms: Room[];
+};
 export type MeetingError = { error: string };
 
 // Responses keep their existing wire shapes; only requests have a discriminator.
 // A successful self-removal returns { room: null }, not a failed request.
 export type MeetingResponse<R extends MeetingRequest = MeetingRequest> =
-  R extends { type: 'login' }
+  R extends { type: 'login' | 'signup' }
     ? MeetingSnapshot
     : R extends { type: 'logout' }
       ? Record<string, never>

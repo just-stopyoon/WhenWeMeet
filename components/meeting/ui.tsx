@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { CircleHelp } from 'lucide-react';
-import { labelDate, type Room } from '../../lib/meeting';
+import { labelDate, memberLabel, type Room } from '../../lib/meeting';
 
 export function Avatar({ name, index = 0 }: { name: string; index?: number }) {
   return <span className={'avatar c' + (index % 5)}>{name[0]}</span>;
@@ -52,7 +52,9 @@ export function AvailabilityHelp({ room, date }: { room: Room; date: string }) {
                   {slot} · {people.length}명 가능
                 </strong>
                 <p>
-                  {people.length ? people.join(', ') : '가능한 친구가 없어요.'}
+                  {people.length
+                    ? people.map((id) => memberLabel(room, id)).join(', ')
+                    : '가능한 친구가 없어요.'}
                 </p>
               </div>
             );
@@ -111,7 +113,7 @@ export function AvatarStack({ names }: { names: string[] }) {
   return (
     <div className="avatar-stack">
       {names.map((name, index) => (
-        <Avatar key={name} name={name} index={index} />
+        <Avatar key={index} name={name} index={index} />
       ))}
     </div>
   );

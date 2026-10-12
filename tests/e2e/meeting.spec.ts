@@ -136,12 +136,12 @@ test('로그인과 초대 참가부터 일정·지역 확정, 새로고침까지
     const hostPage = await actor(browser, contexts, baseURL, viewport, host);
     const guestPage = await actor(browser, contexts, baseURL, viewport);
     await guestPage.goto(`/?join=${room.code}`);
-    await guestPage.getByLabel('닉네임', { exact: true }).fill(guest.name);
+    await guestPage.getByLabel('아이디', { exact: true }).fill(guest.name);
     await guestPage
-      .getByLabel('숫자 4자리 PIN', { exact: true })
+      .getByLabel('숫자 4자리 비밀번호', { exact: true })
       .fill(guest.pin);
     await uiAction(guestPage, 'login', () =>
-      guestPage.getByRole('button', { name: '시작하기', exact: true }).click(),
+      guestPage.getByRole('button', { name: '로그인', exact: true }).click(),
     );
     await expect(guestPage.getByLabel('초대 코드')).toHaveValue(room.code);
     await uiAction(guestPage, 'join', () =>
