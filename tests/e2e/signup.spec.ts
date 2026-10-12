@@ -20,7 +20,7 @@ test('회원가입 항목과 로그인 항목을 구분하고 입력창 서체�
   await page.getByRole('button', { name: '처음이에요 · 회원가입' }).click();
   await page.getByLabel('아이디', { exact: true }).fill('my-id');
   await page.getByPlaceholder('친구들이 알아볼 수 있는 이름').fill('내 닉네임');
-  await page.getByLabel('숫자 4자리 비밀번호', { exact: true }).fill('0123');
+  await page.getByLabel('숫자 4자리 PIN', { exact: true }).fill('0123');
   const styles = await page
     .getByLabel('아이디', { exact: true })
     .evaluate((input) => ({

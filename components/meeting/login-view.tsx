@@ -71,6 +71,20 @@ export function LoginView({
               placeholder="로그인에 사용할 아이디"
             />
           </label>
+          <label className="field">
+            숫자 4자리 PIN
+            <input
+              type="password"
+              autoComplete={signup ? 'new-password' : 'current-password'}
+              inputMode="numeric"
+              required
+              pattern="[0-9]{4}"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => onPinChange(e.target.value.replace(/\D/g, ''))}
+              placeholder="숫자 4자리"
+            />
+          </label>
           {signup && (
             <label className="field">
               닉네임
@@ -85,20 +99,6 @@ export function LoginView({
               <small>다른 사람과 같은 닉네임도 사용할 수 있어요.</small>
             </label>
           )}
-          <label className="field">
-            숫자 4자리 비밀번호
-            <input
-              type="password"
-              autoComplete={signup ? 'new-password' : 'current-password'}
-              inputMode="numeric"
-              required
-              pattern="[0-9]{4}"
-              maxLength={4}
-              value={pin}
-              onChange={(e) => onPinChange(e.target.value.replace(/\D/g, ''))}
-              placeholder="숫자 4자리"
-            />
-          </label>
           <button type="submit" hidden tabIndex={-1} aria-hidden="true">
             제출
           </button>

@@ -266,7 +266,7 @@ test('로그인과 로그아웃 실패는 기존 세션을 유지하고 성공�
   });
   await page.goto('/');
   const nickname = page.getByLabel('아이디', { exact: true });
-  const pin = page.getByLabel('숫자 4자리 비밀번호', { exact: true });
+  const pin = page.getByLabel('숫자 4자리 PIN', { exact: true });
   const start = page.getByRole('button', { name: '로그인', exact: true });
   await nickname.fill(user);
   await pin.fill('1234');
