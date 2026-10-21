@@ -27,6 +27,10 @@ npm run dev
 
 화면은 4초마다 서버 상태를 확인합니다. 같은 계정으로 다른 기기에 로그인하면 기존 모임과 제출 기록을 볼 수 있습니다. 이전 localStorage 체험 계정과 샘플 방은 서버로 이관하지 않습니다.
 
+첫 연결에 실패하면 로그인 화면 대신 연결 오류 화면에서 **다시 연결하기**를 누를 수 있습니다. 최초 조회와 각 수동 재시도는 30초까지만 기다리고, 연결 중에는 중복 재시도와 로그인·모임 저장을 막습니다. 자동 재시도는 하지 않으며 연결 성공 뒤의 일반 조회·저장 동작은 기존 방식을 유지합니다.
+
+초대 링크의 코드는 최초 조회 전에 한 번 보관합니다. 연결 실패·재시도와 로그인/회원가입 전환 후에도 원래 코드가 참가 화면에 표시됩니다. 로그인된 사용자는 바로 참가 화면으로, 로그인되지 않은 사용자는 인증 후 참가 화면으로 이동합니다. 실제 참가는 버튼으로 제출하며, 실패하면 코드와 URL을 유지하고 성공했을 때 URL을 정리합니다. 코드는 현재 페이지에서 보관하고 새로고침하면 URL에 남아 있는 코드를 다시 읽습니다.
+
 ## 구현 범위
 
 - React 19 + TypeScript, Vite/Vinext 기반 로컬 프로젝트
@@ -67,6 +71,7 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `app/page.tsx`: 화면 조합·입력 초안·명시적 액션 호출·성공 후 이동·오류/토스트·시트 포커스
 - `components/meeting/`: 홈·로그인·생성·참가 화면, 모임 단계별 화면과 공통 표시 요소. `meeting-sheets.tsx`는 공통 dialog와 여섯 종류의 시트 내용을 담당
 - `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·저장 중 상태와 `pending`/`generation` 동시성 제어
+- `components/meeting/connection-view.tsx`: 초기 연결 로딩·오류·수동 재시도 화면
 - `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
 - `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
@@ -108,12 +113,14 @@ npm run test:e2e
 | `npm run lint`       | `oxlint app api components hooks lib`: 앱·게이트웨이·화면·훅·공통 로직 |
 | `npm run lint:tests` | `oxlint tests`: 테스트 코드                                            |
 | `npm run lint:all`   | `oxlint .`: 위 범위와 스크립트·설정 파일을 포함한 저장소 전체          |
-| `npm test`           | 기존 Node 내장 러너의 단위 테스트 41개                                 |
+| `npm test`           | Node 내장 러너의 단위 테스트 42개                                      |
 | `npm run test:api`   | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장              |
 | `npm run test:e2e`   | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
 | `npm run test:all`   | 단위·API·브라우저 전체, 앱 빌드 한 번                                  |
 
 `npm test`는 TypeScript로 `tests/*.test.ts`를 임시 폴더에 CommonJS로 컴파일하고 실행 후 정리합니다. Playwright는 `tests/api/`, `tests/e2e/`의 `.spec.ts`만 실행합니다. `test:e2e`의 `meeting.spec.ts`, `sheet-focus.spec.ts`, `meeting-actions.spec.ts`, `meeting-entry.spec.ts`는 실제 API/D1로 사용자 흐름·요청 payload·저장·바텀시트 포커스를 검사합니다. `timing.spec.ts`, `sheet-focus-mocked.spec.ts`, `meeting-actions-mocked.spec.ts`, `meeting-sync.spec.ts`, `meeting-schedule-sync.spec.ts`는 명시적인 모의 응답으로 한국 자정·복귀 이벤트·지연 GET 방어·강제 상태 변경·저장 실패 후 입력과 포커스·초기 조회와 폴링 주기·저장 중 중복 요청 억제·일정 초안 유지를 검증하며 D1 저장 검증을 대신하지 않습니다. `tests/meeting-contract.types.ts`의 요청·응답 계약 검사는 `npm run typecheck`에서 수행합니다.
+
+`initial-connection-mocked.spec.ts`는 초기 네트워크·HTTP·JSON 오류, 30초 제한, 취소를 무시한 지연 응답, 중복 재시도와 로그인/회원가입 후 초대 보존을 모의 응답으로 검사합니다. `initial-connection.spec.ts`는 첫 조회 실패만 주입한 뒤 실제 로컬 Workers/D1로 기존 세션·로그인·회원가입 및 참가 저장을 검사하며, 참가 실패 시 코드·URL 유지와 성공 후 새로고침도 확인합니다. 두 화면 크기의 오류·재시도·초대 코드 보존 캡처는 `outputs/verification/initial-connection-retry/`와 Playwright 첨부 자료에 저장합니다.
 
 API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
 

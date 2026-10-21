@@ -28,6 +28,7 @@ import type { MeetingSnapshot } from '../lib/meeting-contract';
 import type { View, Sheet } from '../components/meeting/types';
 import { HomeView } from '../components/meeting/home-view';
 import { LoginView } from '../components/meeting/login-view';
+import { ConnectionView } from '../components/meeting/connection-view';
 import { CreateView } from '../components/meeting/create-view';
 import { JoinView } from '../components/meeting/join-view';
 import { RoomView } from '../components/meeting/room-view';
@@ -99,10 +100,6 @@ export default function Home() {
     },
     [view, active],
   );
-  const onInitialError = useCallback((message: string) => {
-    setError(message);
-    changeView('login');
-  }, []);
   const onPollError = useCallback((message: string) => setToast(message), []);
   const onSaveStart = useCallback(() => setError(''), []);
   const onSaveError = useCallback((message: string) => {
@@ -110,7 +107,8 @@ export default function Home() {
     setToast(message);
   }, []);
   const {
-    ready,
+    initialLoad,
+    retryInitialLoad,
     user,
     nickname,
     rooms,
@@ -121,7 +119,6 @@ export default function Home() {
   } = useMeetingSync({
     onInitialLoad,
     onRefresh,
-    onInitialError,
     onPollError,
     onSaveStart,
     onSaveError,
@@ -131,6 +128,16 @@ export default function Home() {
     view,
     view === 'room' ? active : null,
   ]);
+  const recoveringConnection = useRef(false);
+  useLayoutEffect(() => {
+    if (initialLoad.status === 'error') recoveringConnection.current = true;
+    else if (initialLoad.status === 'ready' && recoveringConnection.current) {
+      recoveringConnection.current = false;
+      appRef.current
+        ?.querySelector<HTMLElement>('main h1')
+        ?.focus({ preventScroll: true });
+    }
+  }, [initialLoad.status]);
   function setView(v: View) {
     setError('');
     changeView(v);
@@ -427,15 +434,8 @@ export default function Home() {
     setSheet(null);
   }
   const mine = rooms.filter((r) => r.members.includes(user) && !expired(r));
-  if (!ready)
-    return (
-      <div className="app-shell">
-        <div className="loading">
-          <CalendarDays />
-          <p>모임을 준비하고 있어요</p>
-        </div>
-      </div>
-    );
+  if (initialLoad.status !== 'ready')
+    return <ConnectionView state={initialLoad} onRetry={retryInitialLoad} />;
   return (
     <>
       <aside className="desktop-note">
