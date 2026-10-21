@@ -1339,6 +1339,42 @@ input[type='date']:focus {
   margin: 0 auto 20px;
   color: var(--blue);
 }
+.connection-view {
+  min-height: calc(100dvh - 36px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 60px 28px;
+  text-align: center;
+}
+.connection-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 28px;
+  border-radius: 24px;
+  color: var(--blue);
+  background: #e8f3ff;
+}
+.connection-view h1 {
+  outline: none;
+  font-size: 24px;
+  line-height: 1.5;
+  font-weight: 700;
+  word-break: keep-all;
+}
+.connection-view p {
+  margin-top: 14px;
+  color: var(--sub);
+  font-size: 15px;
+  line-height: 1.6;
+  word-break: keep-all;
+}
+.connection-view .primary {
+  margin-top: 32px;
+}
 .desktop-note {
   display: none;
 }

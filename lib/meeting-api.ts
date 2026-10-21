@@ -5,12 +5,16 @@ import type {
   MeetingSnapshot,
 } from './meeting-contract';
 
-export async function meetingApi(): Promise<MeetingSnapshot>;
+export async function meetingApi(
+  payload?: undefined,
+  options?: { signal?: AbortSignal },
+): Promise<MeetingSnapshot>;
 export async function meetingApi<R extends MeetingRequest>(
   payload: R,
 ): Promise<MeetingResponse<R>>;
 export async function meetingApi(
   payload?: MeetingRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<MeetingSnapshot | MeetingResponse> {
   const response = await fetch(
     '/api/meeting',
@@ -20,7 +24,7 @@ export async function meetingApi(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         }
-      : { cache: 'no-store' },
+      : { cache: 'no-store', signal: options?.signal },
   );
   const data = (await response.json()) as
     | MeetingSnapshot

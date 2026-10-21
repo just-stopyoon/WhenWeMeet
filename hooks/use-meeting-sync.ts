@@ -12,27 +12,53 @@ import type {
 type MeetingSyncOptions = {
   onInitialLoad: (snapshot: MeetingSnapshot, inviteCode: string | null) => void;
   onRefresh: (snapshot: MeetingSnapshot) => void;
-  onInitialError: (message: string) => void;
   onPollError: (message: string) => void;
   onSaveStart: () => void;
   onSaveError: (message: string) => void;
 };
 
+export type InitialLoadState =
+  | { status: 'loading'; retrying: boolean }
+  | { status: 'error'; message: string }
+  | { status: 'ready' };
+
+type InitialRequest = {
+  controller: AbortController;
+  timer?: ReturnType<typeof setTimeout>;
+};
+type InitialLifecycle = {
+  mounted: boolean;
+  ready: boolean;
+  attempt: number;
+  invite: string | null | undefined;
+  request: InitialRequest | null;
+};
+
 export function useMeetingSync({
   onInitialLoad,
   onRefresh,
-  onInitialError,
   onPollError,
   onSaveStart,
   onSaveError,
 }: MeetingSyncOptions) {
-  const [ready, setReady] = useState(false);
+  const [initialLoad, setInitialLoad] = useState<InitialLoadState>({
+    status: 'loading',
+    retrying: false,
+  });
+  const ready = initialLoad.status === 'ready';
   const [user, setUser] = useState('');
   const [nickname, setNickname] = useState('');
   const [rooms, setRooms] = useState<Room[]>([]);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const generation = useRef(0);
+  const initial = useRef<InitialLifecycle>({
+    mounted: false,
+    ready: false,
+    attempt: 0,
+    invite: undefined,
+    request: null,
+  });
 
   const replaceSession = useCallback((snapshot: MeetingSnapshot) => {
     setUser(snapshot.user);
@@ -53,21 +79,80 @@ export function useMeetingSync({
     onRefresh(snapshot);
   }, [onRefresh, replaceSession]);
 
+  const loadInitial = useCallback(
+    (retrying = false) => {
+      const lifecycle = initial.current;
+      if (!lifecycle.mounted || lifecycle.ready || lifecycle.request) return;
+      if (lifecycle.invite === undefined)
+        lifecycle.invite = new URLSearchParams(window.location.search).get(
+          'join',
+        );
+      const attempt = ++lifecycle.attempt;
+      const request: InitialRequest = { controller: new AbortController() };
+      const isCurrent = () =>
+        lifecycle.mounted && lifecycle.attempt === attempt;
+      const finish = () => {
+        clearTimeout(request.timer);
+        if (lifecycle.request === request) lifecycle.request = null;
+      };
+      request.timer = setTimeout(() => {
+        if (!isCurrent()) return;
+        // Invalidate before aborting: even a transport that ignores abort is stale.
+        lifecycle.attempt++;
+        finish();
+        request.controller.abort();
+        setInitialLoad({
+          status: 'error',
+          message: '연결이 오래 걸리고 있어요. 다시 시도해 주세요.',
+        });
+      }, 30_000);
+      lifecycle.request = request;
+      setInitialLoad({ status: 'loading', retrying });
+      void meetingApi(undefined, { signal: request.controller.signal })
+        .then((snapshot) => {
+          if (!isCurrent()) return;
+          if (
+            !snapshot ||
+            typeof snapshot.user !== 'string' ||
+            !Array.isArray(snapshot.rooms) ||
+            (snapshot.nickname !== undefined &&
+              typeof snapshot.nickname !== 'string')
+          )
+            throw new Error('Invalid initial snapshot');
+          finish();
+          replaceSession(snapshot);
+          onInitialLoad(snapshot, lifecycle.invite ?? null);
+          lifecycle.ready = true;
+          setInitialLoad({ status: 'ready' });
+        })
+        .catch(() => {
+          if (!isCurrent()) return;
+          finish();
+          setInitialLoad({
+            status: 'error',
+            message: '인터넷 연결을 확인한 뒤 다시 시도해 주세요.',
+          });
+        });
+    },
+    [onInitialLoad, replaceSession],
+  );
+
+  const retryInitialLoad = useCallback(() => loadInitial(true), [loadInitial]);
+
   useEffect(() => {
-    let stopped = false;
-    const invite = new URLSearchParams(window.location.search).get('join');
-    meetingApi()
-      .then((snapshot) => {
-        if (stopped) return;
-        replaceSession(snapshot);
-        onInitialLoad(snapshot, invite);
-      })
-      .catch((error) => onInitialError(error.message))
-      .finally(() => setReady(true));
+    const lifecycle = initial.current;
+    lifecycle.mounted = true;
+    loadInitial();
     return () => {
-      stopped = true;
+      lifecycle.mounted = false;
+      lifecycle.attempt++;
+      if (lifecycle.request) {
+        clearTimeout(lifecycle.request.timer);
+        lifecycle.request.controller.abort();
+        lifecycle.request = null;
+      }
     };
-  }, [onInitialLoad, onInitialError, replaceSession]);
+  }, [loadInitial]);
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -83,7 +168,7 @@ export function useMeetingSync({
   async function send<R extends MeetingRequest>(
     payload: R,
   ): Promise<MeetingResponse<R> | null> {
-    if (pending.current) return null;
+    if (!initial.current.ready || pending.current) return null;
     pending.current = true;
     generation.current++;
     setBusy(true);
@@ -114,6 +199,8 @@ export function useMeetingSync({
 
   return {
     ready,
+    initialLoad,
+    retryInitialLoad,
     user,
     nickname,
     rooms,

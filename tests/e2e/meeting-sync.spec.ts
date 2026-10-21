@@ -188,7 +188,8 @@ test('지연 POST 중에는 추가 POST와 폴링을 막고 실패 후 재시도
     button.click();
     button.click();
   });
-  await page.clock.runFor(8000);
+  // The initial GET's 30-second timeout must never cancel a normal POST.
+  await page.clock.runFor(31_000);
   expect(posts).toEqual([payload]);
   expect(gets).toBe(1);
   await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy', 'true');
