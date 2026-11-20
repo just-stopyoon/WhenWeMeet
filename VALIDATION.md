@@ -1,5 +1,30 @@
 # API·브라우저 자동 테스트 검증 기록
 
+## 2026-11-20 에이전트 지침 AGENTS.md와 이슈 문서 추가
+
+이슈 #9. `d4d9ec5`에서 만든 `docs/agent-guidelines` 브랜치의 문서 변경(`AGENTS.md`, `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, README 범위 표기 세 줄)을 macOS에서 확인했습니다. 앱 코드·테스트·설정은 바꾸지 않았습니다.
+
+### 실행한 검사
+
+이슈의 완료 조건 1–7을 리뷰 반영 커밋 `537892b`에서 다시 실행했고 모두 통과했습니다.
+
+| 조건 | 결과 |
+| --- | --- |
+| 1. `AGENTS.md` 줄 수 60–80 | 77줄 |
+| 2. 명령·경로 대조 | `npm run` 이름 5개가 `package.json` `scripts`에 있음. 백틱 안 경로 19개와 명령 안 경로 2개가 모두 존재. 나머지 백틱 항목은 식별자로 분류했고 미분류 0개 |
+| 3. 초안 처리 표의 "남김" 항목 | 실행 도구·검증 명령·계약 세 절·UI 원칙·커밋·브랜치 규칙이 모두 있음 |
+| 4. Clipback 원본과 비교 | 원본에서 저장소 이름만 바꾼 사본과 `issue-tracker.md`가 같음(바뀐 줄은 3·5행), `triage-labels.md`는 원본과 같음 |
+| 5. 코드 블록 밖 `~` | 0건 |
+| 6. GitHub 렌더(`gh api /markdown`, gfm)의 `<del>` | 네 파일 모두 렌더 성공, `<del>` 0개 |
+| 7. 공백 검사 | `git diff --check d4d9ec5...HEAD`, `git diff --check`, `git diff --cached --check` 모두 통과 |
+
+검사 2·4·6은 일부러 틀린 입력(없는 스크립트 이름과 파일, 저장소 이름을 바꾸지 않은 원본, 실패하는 GitHub 요청)을 넣으면 실패하는 것도 확인했습니다.
+
+### 미검증
+
+- 앱 검사(`npm run typecheck`, `npm run lint:all`, `npm run test:all`)는 로컬에서 실행하지 않았습니다. 문서만 바꾸는 변경이라 이슈의 검사 계획에 따라 PR CI(`Tests` workflow)로 확인합니다.
+- 화면 확인은 하지 않았습니다. 앱 화면을 바꾸지 않습니다.
+
 ## 2026-10-21 초기 연결 재시도와 초대 코드 보존
 
 최신 main `e290a52`에서 만든 `fix/initial-connection-retry` 브랜치의 로컬 변경을 macOS, Node 24.3.0, npm 11.4.2, Playwright 1.63.0 및 Chromium 360px·430px에서 검증했습니다.
