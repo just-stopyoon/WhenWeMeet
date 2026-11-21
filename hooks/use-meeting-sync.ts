@@ -56,6 +56,8 @@ export function useMeetingSync({
   const [user, setUser] = useState('');
   const [nickname, setNickname] = useState('');
   const [rooms, setRooms] = useState<Room[]>([]);
+  // From the last signed-in response (load, poll, login, signup).
+  const [pushPublicKey, setPushPublicKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const generation = useRef(0);
@@ -72,9 +74,15 @@ export function useMeetingSync({
     setUser(snapshot.user);
     setNickname(snapshot.nickname ?? snapshot.user);
     setRooms(snapshot.rooms);
+    setPushPublicKey(
+      typeof snapshot.pushPublicKey === 'string'
+        ? snapshot.pushPublicKey
+        : undefined,
+    );
   }, []);
   const clearSession = useCallback(() => {
     setRooms([]);
+    setPushPublicKey(undefined);
     setUser('');
     setNickname('');
   }, []);
@@ -215,6 +223,7 @@ export function useMeetingSync({
     user,
     nickname,
     rooms,
+    pushPublicKey,
     busy,
     send,
     replaceSession,

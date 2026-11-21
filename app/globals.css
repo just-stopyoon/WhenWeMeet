@@ -1272,6 +1272,9 @@ input[type='date']:focus {
 .menu-row > svg:last-child:not(:first-child) {
   margin-left: auto;
 }
+.menu-row > .menu-row-label {
+  flex: 1;
+}
 .danger {
   color: #e94d4d !important;
 }

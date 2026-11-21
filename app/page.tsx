@@ -24,6 +24,7 @@ import {
 } from '../lib/meeting-view';
 import { useKoreanToday } from '../hooks/use-korean-today';
 import { useMeetingSync } from '../hooks/use-meeting-sync';
+import { usePushNotifications } from '../hooks/use-push-notifications';
 import type { MeetingSnapshot } from '../lib/meeting-contract';
 import type { View, Sheet } from '../components/meeting/types';
 import { HomeView } from '../components/meeting/home-view';
@@ -39,6 +40,24 @@ import { RegionView } from '../components/meeting/region-view';
 import { TieView } from '../components/meeting/tie-view';
 import { FinalView } from '../components/meeting/final-view';
 import { MeetingSheets } from '../components/meeting/meeting-sheets';
+
+// "나중에" on the post-create/join notification sheet: a per-device
+// convenience record only (never sent to the server). Storage may throw.
+const pushPromptKey = 'wwm-push-prompt-later';
+function pushPromptDismissed() {
+  try {
+    return window.localStorage.getItem(pushPromptKey) === '1';
+  } catch {
+    return false;
+  }
+}
+function dismissPushPrompt() {
+  try {
+    window.localStorage.setItem(pushPromptKey, '1');
+  } catch {
+    // The sheet still closes; it may ask again on this device.
+  }
+}
 
 // The fields the room screen reads when a /?room= entry opens a room. A room
 // the home list can show may still lack them (issue #14 T4 final review).
@@ -96,6 +115,11 @@ export default function Home() {
   const [category, setCategory] = useState<'food' | 'cafe'>('food'),
     [linkName, setLinkName] = useState('');
   const [editingSchedule, setEditingSchedule] = useState(false);
+  // Bumped on every sign-in and sign-out (push registrations belong to one).
+  const [session, setSession] = useState(0);
+  // The room whose create/join just succeeded, until the push sheet decides.
+  const [pushPromptRoom, setPushPromptRoom] = useState('');
+  const loggingOut = useRef(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const sheetInputRef = useRef<HTMLInputElement>(null);
   const appRef = useRef<HTMLDivElement>(null);
@@ -149,6 +173,7 @@ export default function Home() {
     user,
     nickname,
     rooms,
+    pushPublicKey,
     busy,
     send,
     replaceSession,
@@ -159,6 +184,13 @@ export default function Home() {
     onPollError,
     onSaveStart,
     onSaveError,
+  });
+  const push = usePushNotifications({
+    ready: initialLoad.status === 'ready',
+    user,
+    publicKey: pushPublicKey,
+    session,
+    save: send,
   });
   const sheetContext = JSON.stringify([
     user,
@@ -261,6 +293,22 @@ export default function Home() {
     setCustomDate('');
     setExpandedDateContext('');
   }
+  // After a create/join success: once, only when off or unsupported, only on
+  // that room's screen, and never after "나중에" on this device. While the
+  // device is still preparing, wait for the result. Runs after the room
+  // switch above so its sheet reset does not close this sheet.
+  if (pushPromptRoom) {
+    if (view !== 'room' || active !== pushPromptRoom) setPushPromptRoom('');
+    else if (push.state !== 'preparing') {
+      setPushPromptRoom('');
+      if (
+        (push.state === 'off' || push.state === 'unsupported') &&
+        !sheet &&
+        !pushPromptDismissed()
+      )
+        changeSheet('push');
+    }
+  }
   function setRegionVotes(choices: string[]) {
     if (room)
       setRegionDraft({ context: regionVoteContext(room, user), choices });
@@ -319,6 +367,7 @@ export default function Home() {
     );
     if (!data) return;
     replaceSession(data);
+    setSession((value) => value + 1);
     setPin('');
     // A kept entry decides; without one the existing rule stands.
     if (!consumeEntry(data)) setView(code ? 'join' : 'home');
@@ -334,6 +383,7 @@ export default function Home() {
     });
     if (data) {
       openRoom(data.room);
+      setPushPromptRoom(data.room.id);
       setName('');
       notify('모임을 만들었어요. 친구들을 초대해 보세요.');
     }
@@ -342,6 +392,7 @@ export default function Home() {
     const data = await send({ type: 'join', code: code.trim().toUpperCase() });
     if (data) {
       openRoom(data.room);
+      setPushPromptRoom(data.room.id);
       window.history.replaceState(null, '', '/');
     }
   }
@@ -496,7 +547,16 @@ export default function Home() {
     setView('home');
   }
   async function logout() {
-    if (!(await send({ type: 'logout' }))) return;
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    try {
+      // R2: whatever the state, try to drop this device's subscription first.
+      await push.releaseDevice();
+      if (!(await send({ type: 'logout' }))) return;
+    } finally {
+      loggingOut.current = false;
+    }
+    setSession((value) => value + 1);
     clearSession();
     setView('login');
     setSheet(null);
@@ -745,6 +805,14 @@ export default function Home() {
           onCloseRoom={closeRoom}
           onLogout={logout}
           onCopyInvite={copyInvite}
+          pushState={push.state}
+          pushWorking={push.working}
+          onPushEnable={push.enable}
+          onPushDisable={push.disable}
+          onPushLater={() => {
+            dismissPushPrompt();
+            setSheet(null);
+          }}
         />
       </div>
     </>
