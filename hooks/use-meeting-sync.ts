@@ -10,7 +10,13 @@ import type {
 // Keep callbacks stable so input renders do not restart the initial request
 // or polling timer. onRefresh may change with the current view and room.
 type MeetingSyncOptions = {
-  onInitialLoad: (snapshot: MeetingSnapshot, inviteCode: string | null) => void;
+  // roomEntry is the first URL's ?room= value; null whenever an invite is
+  // present (the invite wins).
+  onInitialLoad: (
+    snapshot: MeetingSnapshot,
+    inviteCode: string | null,
+    roomEntry: string | null,
+  ) => void;
   onRefresh: (snapshot: MeetingSnapshot) => void;
   onPollError: (message: string) => void;
   onSaveStart: () => void;
@@ -31,6 +37,7 @@ type InitialLifecycle = {
   ready: boolean;
   attempt: number;
   invite: string | null | undefined;
+  room: string | null;
   request: InitialRequest | null;
 };
 
@@ -49,14 +56,19 @@ export function useMeetingSync({
   const [user, setUser] = useState('');
   const [nickname, setNickname] = useState('');
   const [rooms, setRooms] = useState<Room[]>([]);
+  // From the last signed-in response (load, poll, login, signup).
+  const [pushPublicKey, setPushPublicKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  // Resolved when the running save ends (sendAfterSave waits on them).
+  const saveWaiters = useRef<(() => void)[]>([]);
   const generation = useRef(0);
   const initial = useRef<InitialLifecycle>({
     mounted: false,
     ready: false,
     attempt: 0,
     invite: undefined,
+    room: null,
     request: null,
   });
 
@@ -64,9 +76,15 @@ export function useMeetingSync({
     setUser(snapshot.user);
     setNickname(snapshot.nickname ?? snapshot.user);
     setRooms(snapshot.rooms);
+    setPushPublicKey(
+      typeof snapshot.pushPublicKey === 'string'
+        ? snapshot.pushPublicKey
+        : undefined,
+    );
   }, []);
   const clearSession = useCallback(() => {
     setRooms([]);
+    setPushPublicKey(undefined);
     setUser('');
     setNickname('');
   }, []);
@@ -83,10 +101,13 @@ export function useMeetingSync({
     (retrying = false) => {
       const lifecycle = initial.current;
       if (!lifecycle.mounted || lifecycle.ready || lifecycle.request) return;
-      if (lifecycle.invite === undefined)
-        lifecycle.invite = new URLSearchParams(window.location.search).get(
-          'join',
-        );
+      // Read once at the first attempt so failures and retries keep it.
+      if (lifecycle.invite === undefined) {
+        const params = new URLSearchParams(window.location.search);
+        lifecycle.invite = params.get('join');
+        // Any join key, even an empty one, means the room is dropped (S3).
+        lifecycle.room = params.has('join') ? null : params.get('room');
+      }
       const attempt = ++lifecycle.attempt;
       const request: InitialRequest = { controller: new AbortController() };
       const isCurrent = () =>
@@ -121,7 +142,7 @@ export function useMeetingSync({
             throw new Error('Invalid initial snapshot');
           finish();
           replaceSession(snapshot);
-          onInitialLoad(snapshot, lifecycle.invite ?? null);
+          onInitialLoad(snapshot, lifecycle.invite ?? null, lifecycle.room);
           lifecycle.ready = true;
           setInitialLoad({ status: 'ready' });
         })
@@ -194,7 +215,19 @@ export function useMeetingSync({
     } finally {
       pending.current = false;
       setBusy(false);
+      for (const resume of saveWaiters.current.splice(0)) resume();
     }
+  }
+
+  // Like send, but a save already running is waited for instead of refused:
+  // the request is sent exactly once, right after it (no other save starts
+  // in between, since the wait resumes before any new input is handled).
+  async function sendAfterSave<R extends MeetingRequest>(
+    payload: R,
+  ): Promise<MeetingResponse<R> | null> {
+    while (pending.current)
+      await new Promise<void>((resume) => saveWaiters.current.push(resume));
+    return send(payload);
   }
 
   return {
@@ -204,8 +237,10 @@ export function useMeetingSync({
     user,
     nickname,
     rooms,
+    pushPublicKey,
     busy,
     send,
+    sendAfterSave,
     replaceSession,
     clearSession,
   };

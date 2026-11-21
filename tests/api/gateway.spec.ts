@@ -104,3 +104,104 @@ test('게이트웨이는 비슷하지만 허용하지 않은 경로를 404로 �
     });
   }
 });
+
+// The service worker gets its own fake origin that answers as JavaScript,
+// leaving the existing upstream above unchanged (issue #14 T4).
+async function withScriptUpstream<T>(
+  run: (calls: { url: string; method: string }[]) => Promise<T>,
+): Promise<T> {
+  const original = globalThis.fetch;
+  const calls: { url: string; method: string }[] = [];
+  globalThis.fetch = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    calls.push({ url: url.href, method: init?.method ?? 'GET' });
+    return new Response(`// upstream ${url.pathname}`, {
+      status: 200,
+      headers: { 'content-type': 'text/javascript; charset=utf-8' },
+    });
+  };
+  try {
+    return await run(calls);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+test('vercel.json은 /sw.js를 정확한 게이트웨이 경로 하나로 넘긴다', async () => {
+  const all = await rewrites();
+  expect(all.filter((rewrite) => rewrite.source === '/sw.js')).toEqual([
+    { source: '/sw.js', destination: '/api/gateway?path=/sw.js' },
+  ]);
+});
+
+test('게이트웨이는 /sw.js GET·HEAD를 고정 원본에 JavaScript 그대로 no-store로 넘긴다', async () => {
+  const rewrite = (await rewrites()).find(
+    (candidate) => candidate.source === '/sw.js',
+  );
+  expect(rewrite, '/sw.js rewrite is missing.').toBeTruthy();
+  const url = new URL(rewrite!.destination, gatewayOrigin).href;
+  for (const method of ['GET', 'HEAD'] as const) {
+    await withScriptUpstream(async (calls) => {
+      const response = await proxy(new Request(url, { method }));
+      expect(response.status, method).toBe(200);
+      expect(calls, method).toEqual([
+        { url: upstreamOrigin + '/sw.js', method },
+      ]);
+      expect(response.headers.get('content-type'), method).toBe(
+        'text/javascript; charset=utf-8',
+      );
+      expect(response.headers.get('cache-control'), method).toBe(
+        'private, no-store',
+      );
+      expect(response.headers.get('x-content-type-options'), method).toBe(
+        'nosniff',
+      );
+      const body = await response.text();
+      expect(body, method).toBe(method === 'HEAD' ? '' : '// upstream /sw.js');
+      expect(body).not.toContain('when-meet-analytics');
+      expect(body).not.toContain('googletagmanager');
+    });
+  }
+});
+
+test('게이트웨이는 정규화하면 /sw.js인 경로를 같은 자원으로 넘긴다', async () => {
+  await withScriptUpstream(async (calls) => {
+    const response = await proxy(
+      new Request(`${gatewayOrigin}/api/gateway?path=/assets/../sw.js`),
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([{ url: upstreamOrigin + '/sw.js', method: 'GET' }]);
+  });
+});
+
+test('게이트웨이는 /sw.js POST를 403, PUT을 405로 막고 원본을 부르지 않는다', async () => {
+  const url = `${gatewayOrigin}/api/gateway?path=/sw.js`;
+  await withScriptUpstream(async (calls) => {
+    const post = await proxy(
+      new Request(url, {
+        method: 'POST',
+        headers: { origin: gatewayOrigin },
+        body: '{}',
+      }),
+    );
+    expect(post.status).toBe(403);
+    const put = await proxy(new Request(url, { method: 'PUT', body: '{}' }));
+    expect(put.status).toBe(405);
+    expect(calls).toEqual([]);
+  });
+});
+
+test('게이트웨이는 /sw.js와 비슷한 경로를 404로 막는다', async () => {
+  for (const path of ['/sw.js.map', '/sw.jsx', '/sw', '/sw.js/']) {
+    await withScriptUpstream(async (calls) => {
+      const response = await proxy(
+        new Request(`${gatewayOrigin}/api/gateway?path=${path}`),
+      );
+      expect(response.status, path).toBe(404);
+      expect(calls, path).toEqual([]);
+    });
+  }
+});

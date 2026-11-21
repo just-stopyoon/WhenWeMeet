@@ -30,6 +30,7 @@
       "source": "/icons/apple-touch-icon.png",
       "destination": "/api/gateway?path=/icons/apple-touch-icon.png"
     },
+    { "source": "/sw.js", "destination": "/api/gateway?path=/sw.js" },
     {
       "source": "/_next/static/:path*",
       "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/_next/static/:path*"

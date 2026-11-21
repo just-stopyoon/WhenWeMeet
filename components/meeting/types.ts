@@ -8,6 +8,7 @@ export type Sheet =
   | 'settings'
   | 'link'
   | 'addRegion'
-  | 'attendees';
+  | 'attendees'
+  | 'push';
 export type OpenSheet = (sheet: Sheet, trigger?: HTMLButtonElement) => void;
 export type LinkCategory = Room['links'][number]['category'];

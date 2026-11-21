@@ -162,26 +162,28 @@ async function execute() {
   }
   // Check again after the build so a newly occupied port cannot be reused.
   await requireFreePort();
-  const child = launch(
-    process.execPath,
-    [
-      join(root, 'node_modules/wrangler/bin/wrangler.js'),
-      'dev',
-      '--config',
-      'dist/server/wrangler.json',
-      '--local',
-      '--ip',
-      host,
-      '--port',
-      String(port),
-      '--persist-to',
-      join(temporary, 'state'),
-      '--inspector-port',
-      '0',
-      '--show-interactive-dev-session=false',
-    ],
-    true,
-  );
+  // Test server only (issue #14 R9): the Worker signs and encrypts Web Push
+  // but never sends it. Production configuration has no such variable.
+  const pushSendBlocked = 'WHENWEMEET_PUSH_SEND_BLOCKED:1';
+  const devArgs = [
+    join(root, 'node_modules/wrangler/bin/wrangler.js'),
+    'dev',
+    '--config',
+    'dist/server/wrangler.json',
+    '--local',
+    '--ip',
+    host,
+    '--port',
+    String(port),
+    '--persist-to',
+    join(temporary, 'state'),
+    '--inspector-port',
+    '0',
+    '--show-interactive-dev-session=false',
+    '--var',
+    pushSendBlocked,
+  ];
+  const child = launch(process.execPath, devArgs, true);
   const exited = activeClosed.then((result) => {
     throw new Error(
       `Test Wrangler exited (${result.code ?? result.signal}). See test-artifacts/server.log.`,
@@ -203,6 +205,17 @@ async function execute() {
     });
   });
   await Promise.race([ready, exited, aborted()]);
+  // Checked independently of the constant above, on the final arguments: the
+  // start line appears only when `--var` really carries the name and value
+  // that lib/web-push.ts `isPushSendBlocked` treats as blocked.
+  if (
+    devArgs.some(
+      (arg, index) =>
+        devArgs[index - 1] === '--var' &&
+        arg === 'WHENWEMEET_PUSH_SEND_BLOCKED:1',
+    )
+  )
+    record('WEB_PUSH_SEND_BLOCKED_AT_START');
   // Initialises the schema in this run's private D1 and verifies the actual API.
   let healthy = false;
   for (let attempt = 0; attempt < 100; attempt++) {

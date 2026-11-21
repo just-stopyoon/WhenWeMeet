@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import { ChevronRight, Copy, Link2, LogOut, Users, X } from 'lucide-react';
 import { labelDate, memberLabel, type Room } from '../../lib/meeting';
+import type { PushState } from '../../hooks/use-push-notifications';
 import type { OpenSheet, Sheet, View } from './types';
 import { Avatar } from './ui';
 
@@ -27,7 +28,89 @@ type MeetingSheetsProps = {
   onCloseRoom: () => void;
   onLogout: () => void;
   onCopyInvite: () => void;
+  pushState: PushState;
+  pushWorking: boolean;
+  onPushEnable: () => void;
+  onPushDisable: () => void;
+  onPushLater: () => void;
 };
+
+export const pushUnsupportedText =
+  'iPhone은 홈 화면에 추가한 앱에서 알림을 켤 수 있어요. 공유 → 홈 화면에 추가';
+export const pushDeniedText =
+  '알림이 꺼져 있어요. 기기 설정에서 허용해 주세요.';
+
+// The "알림" row of "내 계정" (issue #14 T5 state table).
+function PushRow({
+  pushState,
+  pushWorking,
+  onPushEnable,
+  onPushDisable,
+}: Pick<
+  MeetingSheetsProps,
+  'pushState' | 'pushWorking' | 'onPushEnable' | 'onPushDisable'
+>) {
+  if (pushState === 'unsupported')
+    return <p className="menu-row">{pushUnsupportedText}</p>;
+  if (pushState === 'denied')
+    return <p className="menu-row">{pushDeniedText}</p>;
+  if (pushState === 'on')
+    return (
+      <div className="menu-row">
+        <span className="menu-row-label">알림 켜짐</span>
+        <button
+          className="text-button"
+          disabled={pushWorking}
+          onClick={onPushDisable}
+        >
+          끄기
+        </button>
+      </div>
+    );
+  if (pushState === 'off' || pushState === 'preparing')
+    return (
+      <button
+        className="menu-row"
+        disabled={pushState === 'preparing' || pushWorking}
+        onClick={onPushEnable}
+      >
+        알림 켜기
+      </button>
+    );
+  return null;
+}
+
+// Shown once right after creating or joining a room (off or unsupported).
+function PushPromptSheet({
+  pushState,
+  onPushEnable,
+  onPushLater,
+  onOpenSheet,
+}: Pick<
+  MeetingSheetsProps,
+  'pushState' | 'onPushEnable' | 'onPushLater' | 'onOpenSheet'
+>) {
+  return (
+    <>
+      <h2 id="sheet-title">알림을 켜면 내 차례가 왔을 때 알려 드려요</h2>
+      {pushState === 'unsupported' && <p>{pushUnsupportedText}</p>}
+      {pushState === 'off' && (
+        <button
+          className="primary"
+          onClick={() => {
+            onPushEnable();
+            onOpenSheet(null);
+          }}
+        >
+          알림 켜기
+        </button>
+      )}
+      <button className="secondary full" onClick={onPushLater}>
+        나중에
+      </button>
+    </>
+  );
+}
 
 function MembersSheet({
   room,
@@ -190,6 +273,10 @@ function SettingsSheet({
   onRemoveMember,
   onCloseRoom,
   onLogout,
+  pushState,
+  pushWorking,
+  onPushEnable,
+  onPushDisable,
 }: Pick<
   MeetingSheetsProps,
   | 'room'
@@ -202,6 +289,10 @@ function SettingsSheet({
   | 'onRemoveMember'
   | 'onCloseRoom'
   | 'onLogout'
+  | 'pushState'
+  | 'pushWorking'
+  | 'onPushEnable'
+  | 'onPushDisable'
 >) {
   return (
     <>
@@ -258,6 +349,12 @@ function SettingsSheet({
       ) : (
         <>
           <p>{nickname ?? user}님으로 이용 중이에요.</p>
+          <PushRow
+            pushState={pushState}
+            pushWorking={pushWorking}
+            onPushEnable={onPushEnable}
+            onPushDisable={onPushDisable}
+          />
           <button className="menu-row" onClick={onLogout}>
             <LogOut />
             로그아웃
@@ -291,6 +388,11 @@ export function MeetingSheets({
   onCloseRoom,
   onLogout,
   onCopyInvite,
+  pushState,
+  pushWorking,
+  onPushEnable,
+  onPushDisable,
+  onPushLater,
 }: MeetingSheetsProps) {
   if (!sheet) return null;
   return (
@@ -350,6 +452,18 @@ export function MeetingSheets({
           onRemoveMember={onRemoveMember}
           onCloseRoom={onCloseRoom}
           onLogout={onLogout}
+          pushState={pushState}
+          pushWorking={pushWorking}
+          onPushEnable={onPushEnable}
+          onPushDisable={onPushDisable}
+        />
+      )}
+      {sheet === 'push' && (
+        <PushPromptSheet
+          pushState={pushState}
+          onPushEnable={onPushEnable}
+          onPushLater={onPushLater}
+          onOpenSheet={onOpenSheet}
         />
       )}
       {error && (

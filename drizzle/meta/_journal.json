@@ -15,6 +15,13 @@
       "when": 1791815957869,
       "tag": "0001_account_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795233600000,
+      "tag": "0002_push_subscriptions",
+      "breakpoints": true
     }
   ]
 }
