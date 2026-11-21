@@ -107,7 +107,7 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `app/page.tsx`: 화면 조합·입력 초안·명시적 액션 호출·성공 후 이동·오류/토스트·시트 포커스
 - `components/meeting/`: 홈·로그인·생성·참가 화면, 모임 단계별 화면과 공통 표시 요소. `meeting-sheets.tsx`는 공통 dialog와 일곱 종류의 시트 내용(성공 직후 알림 바텀시트, "내 계정"의 "알림" 줄 포함)을 담당
 - `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·알림 공개 키·저장 중 상태와 `pending`/`generation` 동시성 제어. 첫 URL의 `?join=`·`?room=` 진입 값을 한 번 읽어 보관
-- `hooks/use-push-notifications.ts`: 이 기기의 알림 상태 판정(확인 전·키 없음·미지원·거절·준비 중·켜짐·꺼짐), 켜기·끄기, 로그아웃 전 기기 구독 해지, 세션·endpoint마다 한 번의 다시 맞추기
+- `hooks/use-push-notifications.ts`: 이 기기의 알림 상태 판정(확인 전·키 없음·미지원·거절·준비 중·켜짐·꺼짐), 켜기·끄기, 로그아웃 전 기기 구독 해지, 계정·세션이 바뀔 때마다 endpoint당 한 번의 다시 맞추기. 기기·서버 작업의 결과는 그 작업을 시작한 계정 세대가 지금도 현재일 때만 반영
 - `public/sw.js`: service worker. `push`(알림 표시)와 `notificationclick`(열린 창 이동 또는 새 창)만 처리
 - `components/meeting/connection-view.tsx`: 초기 연결 로딩·오류·수동 재시도 화면
 - `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
