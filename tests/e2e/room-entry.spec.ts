@@ -195,3 +195,72 @@ test('보관한 진입 없이 다시 로그인하면 폼에 남은 참가 코드
     'OLDCODE00000',
   );
 });
+
+// An empty join key still means "join and room together": room is dropped
+// (S3, issue #14 T4 final review).
+test('/?join=(빈 값)과 /?room=이 함께 있으면 room을 버리고 모임을 열지 않는다', async ({
+  page,
+  context,
+  accounts,
+}) => {
+  const [host] = accounts;
+  let room: Room | undefined;
+  try {
+    room = await createRoom(host, { title: uniqueTitle('빈 초대 키 진입') });
+    await context.addCookies(host.storageState.cookies);
+    await page.goto(`/?join=&room=${room.id}`);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(
+      '우리 언제 만날까요?',
+    );
+    await expect(
+      page.getByRole('heading', { name: room.title, exact: true }),
+    ).toBeVisible();
+    await expect(page.locator('header b')).toHaveText('언제 만날래');
+    await expect(page.locator('.toast')).toHaveCount(0);
+  } finally {
+    if (room) await action(host, { type: 'close', roomId: room.id });
+  }
+});
+
+// A room the home list can show but the room screen cannot open (votes
+// missing) is not opened by the entry: home and the existing toast instead
+// (issue #14 T4 final review). Mocked list: the server never sends this.
+test('/?room= 대상 모임이 방 화면에서 읽는 필드가 없으면 열지 않고 홈과 기존 토스트를 보인다', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const damaged = {
+    id: 'damaged-room',
+    code: 'DAMAGED00000',
+    title: '필드가 빠진 모임',
+    stage: 'schedule',
+    host: 'entry-user',
+    members: ['entry-user'],
+    responses: {},
+    start: '2099-01-01',
+    end: '2099-01-20',
+    size: 2,
+    mode: 'all',
+    regions: [],
+    round: 1,
+    attendees: [],
+    links: [],
+    emails: {},
+  };
+  await page.route('**/api/meeting', (route) =>
+    route.fulfill({
+      json: { user: 'entry-user', nickname: '진입', rooms: [damaged] },
+    }),
+  );
+  await page.goto('/?room=damaged-room');
+  await expect(page.locator('.toast')).toHaveText(goneToast);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(
+    '우리 언제 만날까요?',
+  );
+  await expect(
+    page.getByRole('heading', { name: damaged.title, exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  expect(errors).toEqual([]);
+});

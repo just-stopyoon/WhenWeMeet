@@ -67,18 +67,22 @@ async function openTarget(clients, origin, target) {
     await clients.openWindow(target);
     return;
   }
-  // Reuse the open window: bring it forward and move it to the address. A
-  // window this worker does not control yet (first visit, before a reload)
-  // refuses navigate(); that address then opens in a new window.
+  // Reuse the open window: move it to the address first, then bring the
+  // moved window forward. One click grants one window permission, used by
+  // focus() or openWindow(), so focus never comes before the move. A window
+  // this worker does not control yet (first visit, before a reload) refuses
+  // navigate(); the permission then opens that address in a new window.
+  let moved;
   try {
-    await open.focus();
-  } catch {
-    // Focus can be refused; moving the window still goes ahead.
-  }
-  try {
-    await open.navigate(target);
+    moved = await open.navigate(target);
   } catch {
     await clients.openWindow(target);
+    return;
+  }
+  try {
+    await moved?.focus();
+  } catch {
+    // A refused focus is not a failed move: the window already moved.
   }
 }
 

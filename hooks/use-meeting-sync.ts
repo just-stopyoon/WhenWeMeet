@@ -95,7 +95,8 @@ export function useMeetingSync({
       if (lifecycle.invite === undefined) {
         const params = new URLSearchParams(window.location.search);
         lifecycle.invite = params.get('join');
-        lifecycle.room = lifecycle.invite ? null : params.get('room');
+        // Any join key, even an empty one, means the room is dropped (S3).
+        lifecycle.room = params.has('join') ? null : params.get('room');
       }
       const attempt = ++lifecycle.attempt;
       const request: InitialRequest = { controller: new AbortController() };

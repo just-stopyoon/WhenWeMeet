@@ -40,6 +40,31 @@ import { TieView } from '../components/meeting/tie-view';
 import { FinalView } from '../components/meeting/final-view';
 import { MeetingSheets } from '../components/meeting/meeting-sheets';
 
+// The fields the room screen reads when a /?room= entry opens a room. A room
+// the home list can show may still lack them (issue #14 T4 final review).
+function isOpenableRoom(room: Room) {
+  const r = room as Partial<Record<keyof Room, unknown>>;
+  const strings = (value: unknown) =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string');
+  const record = (value: unknown) =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+  return (
+    typeof r.id === 'string' &&
+    typeof r.title === 'string' &&
+    typeof r.host === 'string' &&
+    typeof r.stage === 'string' &&
+    typeof r.start === 'string' &&
+    typeof r.end === 'string' &&
+    typeof r.round === 'number' &&
+    (r.date === undefined || typeof r.date === 'string') &&
+    strings(r.members) &&
+    strings(r.attendees) &&
+    strings(r.regions) &&
+    record(r.responses) &&
+    record(r.votes)
+  );
+}
+
 export default function Home() {
   const [signup, setSignup] = useState(false);
   const [accountId, setAccountId] = useState('');
@@ -262,11 +287,16 @@ export default function Home() {
   function consumeEntry(snapshot: MeetingSnapshot) {
     const id = roomEntry.current;
     if (id === null || !snapshot.user) return false;
+    const target = snapshot.rooms.find((r) => r.id === id);
+    // Checked before anything changes, so a broken room never half-opens.
+    const openable =
+      !!target &&
+      isOpenableRoom(target) &&
+      target.members.includes(snapshot.user) &&
+      !expired(target);
     roomEntry.current = null;
     window.history.replaceState(null, '', '/');
-    const target = snapshot.rooms.find((r) => r.id === id);
-    if (target && target.members.includes(snapshot.user) && !expired(target))
-      openRoom(target, snapshot.user);
+    if (target && openable) openRoom(target, snapshot.user);
     else {
       setView('home');
       setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
