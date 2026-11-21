@@ -94,3 +94,52 @@ export async function removePushSubscription(
     .run();
   return result.meta.changes > 0;
 }
+
+// Delivery (issue #14 T3) also lists rows, which needs `all()`.
+export type SqlListStatement = Omit<SqlStatement, 'bind'> & {
+  bind(...values: unknown[]): SqlListStatement;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+};
+export type SqlListDatabase = { prepare(query: string): SqlListStatement };
+
+export type PushTarget = PushSubscriptionRecord & {
+  account: string;
+  generation: string;
+};
+
+// Delivery targets at send time: rows owned by one of `accounts` whose
+// registering session still exists, belongs to that account and has not
+// expired on the database clock (the same clock as the write above). A logged
+// out session is gone (its rows cascade away); an expired one not yet swept by
+// initialize() is excluded here.
+export async function listPushTargets(
+  db: SqlListDatabase,
+  accounts: readonly string[],
+): Promise<PushTarget[]> {
+  if (!accounts.length) return [];
+  const result = await db
+    .prepare(
+      `SELECT push_subscriptions.account_id AS account, endpoint, p256dh, auth, generation
+       FROM push_subscriptions JOIN sessions ON sessions.token=push_subscriptions.session
+       WHERE push_subscriptions.account_id IN (${accounts.map(() => '?').join(',')})
+         AND sessions.name=push_subscriptions.account_id
+         AND sessions.expires>${databaseNow}`,
+    )
+    .bind(...accounts)
+    .all<PushTarget>();
+  return result.results;
+}
+
+// A 404·410 removes only the row that was sent to: same endpoint and same
+// generation. A row registered again, moved or rewritten meanwhile has a new
+// generation and stays.
+export async function removeGonePushSubscription(
+  db: SqlDatabase,
+  target: Pick<PushTarget, 'endpoint' | 'generation'>,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM push_subscriptions WHERE endpoint=? AND generation=?')
+    .bind(target.endpoint, target.generation)
+    .run();
+  return result.meta.changes > 0;
+}

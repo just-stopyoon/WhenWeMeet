@@ -1,10 +1,11 @@
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { newRoom, daysBetween, type Room } from '../../../lib/meeting';
 import type {
   MeetingError,
   MeetingResponse,
   MeetingSnapshot,
 } from '../../../lib/meeting-contract';
+import { dispatchPushNotices } from '../../../lib/push-dispatch';
 import {
   d1VapidKeyStore,
   removePushSubscription,
@@ -15,12 +16,13 @@ import {
   checkPushSubscription,
 } from '../../../lib/push-subscription';
 import {
-  applyAction,
   expiresOn,
   koreanToday,
   type UnvalidatedAction,
 } from '../../../lib/room-actions';
+import { saveRoomAction, type RoomRow } from '../../../lib/room-save';
 import { withPushPublicKey } from '../../../lib/vapid-keys';
+import { isPushSendBlocked } from '../../../lib/web-push';
 
 const db = () => (env as unknown as { DB: D1Database }).DB;
 // Must not reference the Web Push tables (drizzle/0002): a database without
@@ -324,33 +326,49 @@ export async function POST(req: Request) {
         .run();
       return reply({ room: await withNames(r) });
     }
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const row =
-        a.type === 'join'
-          ? await db()
-              .prepare('SELECT id,data,version FROM rooms WHERE code=?')
-              .bind(String(a.code).trim().toUpperCase())
-              .first<{ id: string; data: string; version: number }>()
-          : await db()
-              .prepare('SELECT id,data,version FROM rooms WHERE id=?')
-              .bind(String(a.roomId))
-              .first<{ id: string; data: string; version: number }>();
-      if (!row)
-        throw new Error('모임을 찾을 수 없어요. 초대 코드를 확인해 주세요.');
-      const updated = applyAction(JSON.parse(row.data), user, a);
-      const result = await db()
-        .prepare(
-          'UPDATE rooms SET data=?,version=version+1,expires=? WHERE id=? AND version=?',
-        )
-        .bind(JSON.stringify(updated), expiresOn(updated), row.id, row.version)
-        .run();
-      if (result.meta.changes)
-        return reply({
-          room: updated.members.includes(user)
-            ? await withNames(updated)
-            : null,
-        });
-    }
+    const saved = await saveRoomAction(
+      {
+        read: () =>
+          a.type === 'join'
+            ? db()
+                .prepare('SELECT id,data,version FROM rooms WHERE code=?')
+                .bind(String(a.code).trim().toUpperCase())
+                .first<RoomRow>()
+            : db()
+                .prepare('SELECT id,data,version FROM rooms WHERE id=?')
+                .bind(String(a.roomId))
+                .first<RoomRow>(),
+        update: async (row, updated) =>
+          (
+            await db()
+              .prepare(
+                'UPDATE rooms SET data=?,version=version+1,expires=? WHERE id=? AND version=?',
+              )
+              .bind(
+                JSON.stringify(updated),
+                expiresOn(updated),
+                row.id,
+                row.version,
+              )
+              .run()
+          ).meta.changes > 0,
+        dispatch: (notices) =>
+          dispatchPushNotices(notices, {
+            db: db(),
+            vapid: d1VapidKeyStore(db()),
+            // Bound call: Workers' fetch rejects a foreign `this`.
+            fetch: (input, init) => fetch(input, init),
+            blocked: isPushSendBlocked(env),
+          }),
+        schedule: waitUntil,
+      },
+      user,
+      a,
+    );
+    if (saved)
+      return reply({
+        room: saved.members.includes(user) ? await withNames(saved) : null,
+      });
     return reply(
       { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },
       409,
