@@ -475,36 +475,6 @@ test('손상된 메시지 주소는 처리되지 않은 오류 없이 홈으로 
   }
 });
 
-test('지난 참가 코드가 남아 있어도 로그인 뒤에는 마지막 알림의 모임을 연다', async ({
-  page,
-  context,
-  accounts,
-}) => {
-  const [host, guest] = accounts;
-  let room: Room | undefined;
-  try {
-    room = await createRoom(host, { title: uniqueTitle('지난 코드 알림') });
-    await action(guest, { type: 'join', code: room.code });
-    const worker = await signedInHome(page, context, guest, 'separate');
-    await page.getByRole('button', { name: '코드로 참가' }).click();
-    await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
-    await page
-      .getByRole('button', { name: '내 모임으로', exact: true })
-      .click();
-    await logout(page);
-    await expectLogin(page);
-    await click(worker, { url: `/?room=${room.id}` });
-    await page.getByLabel('아이디', { exact: true }).fill(guest.name);
-    await page
-      .getByLabel('숫자 4자리 비밀번호', { exact: true })
-      .fill(guest.pin);
-    await page.getByRole('button', { name: '로그인', exact: true }).click();
-    await expect(page.locator('header b')).toHaveText(room.title);
-  } finally {
-    if (room) await action(host, { type: 'close', roomId: room.id });
-  }
-});
-
 test('열린 창의 알림 주소에 join이 함께 있으면 참가 화면이 우선이다', async ({
   page,
   context,
@@ -618,29 +588,6 @@ for (const message of ['join', 'root'] as const) {
     }
   });
 }
-
-test('로그아웃 화면에서 루트 메시지를 받은 뒤 로그인하면 남은 참가 코드가 아니라 홈으로 간다', async ({
-  page,
-  context,
-  accounts,
-}) => {
-  const [, guest] = accounts;
-  const worker = await signedInHome(page, context, guest, 'separate');
-  await page.getByRole('button', { name: '코드로 참가' }).click();
-  await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
-  await page.getByRole('button', { name: '내 모임으로', exact: true }).click();
-  await logout(page);
-  await expectLogin(page);
-  await click(worker, undefined);
-  await handled(page, 1);
-  await expectLogin(page);
-  await signIn(page, guest);
-  await expect(page.locator('header b')).toHaveText('언제 만날래');
-  await expect(page.getByLabel('초대 코드', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    '우리 언제 만날까요?',
-  );
-});
 
 test('알림 조회의 손상된 목록은 적용하지 않고 다음 정상 목록에서 목적지를 한 번 연다', async ({
   page,
@@ -793,23 +740,56 @@ test('새 알림 조회로 모임을 연 뒤 이전 알림 조회가 실패해�
   }
 });
 
-// No entry: the existing rule stands, so a code typed before the session
-// ended still leads to the join screen after signing in again.
-test('보관한 진입이 없으면 로그인 뒤 폼에 남은 참가 코드로 참가 화면을 이어 간다', async ({
+// Signing in again with a join code left in the form (one flow keeps the
+// login count low: the test server allows 50 sign-ins per run). A kept entry
+// decides; without one the existing rule leads to the join screen.
+test('폼에 참가 코드가 남은 채 다시 로그인하면 보관한 진입이 있을 때만 그 진입을 따른다', async ({
   page,
   context,
   accounts,
 }) => {
-  const [, guest] = accounts;
-  await signedInHome(page, context, guest, 'separate');
-  await page.getByRole('button', { name: '코드로 참가' }).click();
-  await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
-  await page.getByRole('button', { name: '내 모임으로', exact: true }).click();
-  await logout(page);
-  await expectLogin(page);
-  await signIn(page, guest);
-  await expect(page.locator('header b')).toHaveText('모임 참가');
-  await expect(page.getByLabel('초대 코드', { exact: true })).toHaveValue(
-    'OLDCODE00000',
-  );
+  const [host, guest] = accounts;
+  let room: Room | undefined;
+  try {
+    room = await createRoom(host, { title: uniqueTitle('지난 코드 알림') });
+    await action(guest, { type: 'join', code: room.code });
+    const worker = await signedInHome(page, context, guest, 'separate');
+    await page.getByRole('button', { name: '코드로 참가' }).click();
+    await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
+    await page
+      .getByRole('button', { name: '내 모임으로', exact: true })
+      .click();
+
+    // No entry: the leftover code leads to the join screen, as before T4.
+    await logout(page);
+    await expectLogin(page);
+    await signIn(page, guest);
+    await expect(page.locator('header b')).toHaveText('모임 참가');
+    await expect(page.getByLabel('초대 코드', { exact: true })).toHaveValue(
+      'OLDCODE00000',
+    );
+
+    // Root message while signed out: home, not the leftover code.
+    await logout(page);
+    await expectLogin(page);
+    await click(worker, undefined);
+    await handled(page, 1);
+    await expectLogin(page);
+    await signIn(page, guest);
+    await expect(page.locator('header b')).toHaveText('언제 만날래');
+    await expect(page.getByLabel('초대 코드', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(
+      '우리 언제 만날까요?',
+    );
+
+    // Room message while signed out: that room, not the leftover code.
+    await logout(page);
+    await expectLogin(page);
+    await click(worker, { url: `/?room=${room.id}` });
+    await handled(page, 2);
+    await signIn(page, guest);
+    await expect(page.locator('header b')).toHaveText(room.title);
+  } finally {
+    if (room) await action(host, { type: 'close', roomId: room.id });
+  }
 });
