@@ -65,6 +65,8 @@ export async function proxy(request) {
       upstream.pathname === '/api/meeting' ||
       upstream.pathname === '/favicon.svg' ||
       upstream.pathname === '/app-logo.png' ||
+      // The Web Push service worker: this exact path only (issue #14).
+      upstream.pathname === '/sw.js' ||
       webAppPaths.has(upstream.pathname) ||
       upstream.pathname.startsWith('/assets/') ||
       upstream.pathname.startsWith('/_next/static/')

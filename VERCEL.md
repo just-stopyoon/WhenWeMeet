@@ -43,6 +43,8 @@ GA4 관리 화면에 같은 이름의 파생 이벤트를 추가로 만들 필�
 - 사용자 응답은 공유 캐시에 저장하지 않습니다. 요청 대상은 지정된 기존 앱으로 고정합니다.
 - 게이트웨이가 넘기는 경로에 홈 화면 앱 정보와 아이콘 다섯 경로(`/manifest.webmanifest`, `/icons/icon-192.png`, `/icons/icon-512.png`, `/icons/icon-maskable-512.png`, `/icons/apple-touch-icon.png`)가 있습니다. 정확히 같은 경로만 넘기고 `/icons/` 아래 다른 경로는 404입니다. 이 응답도 `private, no-store`이고 분석 태그를 넣지 않습니다.
 - 이 다섯 경로는 원본(Sites)을 다시 배포한 뒤에야 Vercel 주소에서 응답합니다. 원본에 파일이 없으면 게이트웨이도 200을 돌려주지 못합니다.
+- 게이트웨이가 넘기는 경로에 알림용 service worker `/sw.js`도 있습니다. 정확히 이 경로만 넘기고(`/sw.js.map`, `/sw.js/` 등은 404) GET·HEAD만 원본에 전달하며 POST는 403입니다. 게이트웨이가 `nosniff`를 붙이므로 원본이 JavaScript 형식으로 응답해야 합니다. 응답은 `private, no-store`이고 분석 태그를 넣지 않습니다.
+- `/sw.js`도 원본(Sites)을 다시 배포한 뒤에야 Vercel 주소에서 응답합니다. 그 전에는 service worker 등록이 실패해 알림을 받을 수 없습니다.
 - 기존 앱의 4자리 PIN 및 패키지 보안 경고를 해결하는 변경은 아닙니다.
 
 Vercel Hobby는 개인·비상업적 용도의 무료 요금제이며 사용량 제한이 있습니다. 이 구성은 기존 Sites/Cloudflare 사용 조건에도 의존합니다.

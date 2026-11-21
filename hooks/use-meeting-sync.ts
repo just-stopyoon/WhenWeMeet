@@ -10,7 +10,12 @@ import type {
 // Keep callbacks stable so input renders do not restart the initial request
 // or polling timer. onRefresh may change with the current view and room.
 type MeetingSyncOptions = {
-  onInitialLoad: (snapshot: MeetingSnapshot, inviteCode: string | null) => void;
+  // roomEntry is the /?room= value; it is null whenever an invite is present.
+  onInitialLoad: (
+    snapshot: MeetingSnapshot,
+    inviteCode: string | null,
+    roomEntry: string | null,
+  ) => void;
   onRefresh: (snapshot: MeetingSnapshot) => void;
   onPollError: (message: string) => void;
   onSaveStart: () => void;
@@ -31,6 +36,7 @@ type InitialLifecycle = {
   ready: boolean;
   attempt: number;
   invite: string | null | undefined;
+  room: string | null;
   request: InitialRequest | null;
 };
 
@@ -57,6 +63,7 @@ export function useMeetingSync({
     ready: false,
     attempt: 0,
     invite: undefined,
+    room: null,
     request: null,
   });
 
@@ -71,22 +78,27 @@ export function useMeetingSync({
     setNickname('');
   }, []);
 
+  // Returns the fetched snapshot even when a save made it too old to apply.
   const refresh = useCallback(async () => {
     const stamp = generation.current;
     const snapshot = await meetingApi();
-    if (pending.current || generation.current !== stamp) return;
-    replaceSession(snapshot);
-    onRefresh(snapshot);
+    if (!pending.current && generation.current === stamp) {
+      replaceSession(snapshot);
+      onRefresh(snapshot);
+    }
+    return snapshot;
   }, [onRefresh, replaceSession]);
 
   const loadInitial = useCallback(
     (retrying = false) => {
       const lifecycle = initial.current;
       if (!lifecycle.mounted || lifecycle.ready || lifecycle.request) return;
-      if (lifecycle.invite === undefined)
-        lifecycle.invite = new URLSearchParams(window.location.search).get(
-          'join',
-        );
+      // Read once so failed attempts and retries keep the same entry.
+      if (lifecycle.invite === undefined) {
+        const params = new URLSearchParams(window.location.search);
+        lifecycle.invite = params.get('join');
+        lifecycle.room = lifecycle.invite ? null : params.get('room');
+      }
       const attempt = ++lifecycle.attempt;
       const request: InitialRequest = { controller: new AbortController() };
       const isCurrent = () =>
@@ -121,7 +133,7 @@ export function useMeetingSync({
             throw new Error('Invalid initial snapshot');
           finish();
           replaceSession(snapshot);
-          onInitialLoad(snapshot, lifecycle.invite ?? null);
+          onInitialLoad(snapshot, lifecycle.invite ?? null, lifecycle.room);
           lifecycle.ready = true;
           setInitialLoad({ status: 'ready' });
         })
@@ -201,6 +213,7 @@ export function useMeetingSync({
     ready,
     initialLoad,
     retryInitialLoad,
+    refresh,
     user,
     nickname,
     rooms,

@@ -79,10 +79,21 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
+  // A /?room= entry waits here until a signed-in snapshot arrives (S3).
+  const roomEntry = useRef<string | null>(null);
+  const enterRoomRef = useRef<(snapshot: MeetingSnapshot) => void>(() => {});
   const onInitialLoad = useCallback(
-    (snapshot: MeetingSnapshot, invite: string | null) => {
+    (
+      snapshot: MeetingSnapshot,
+      invite: string | null,
+      entry: string | null,
+    ) => {
       if (invite) setCode(invite.toUpperCase());
+      // An invite wins over a room entry; the room entry is dropped.
+      if (invite) roomEntry.current = null;
+      else if (entry !== null) roomEntry.current = entry;
       changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
+      if (snapshot.user && !invite) enterRoomRef.current(snapshot);
     },
     [],
   );
@@ -114,6 +125,7 @@ export default function Home() {
     rooms,
     busy,
     send,
+    refresh,
     replaceSession,
     clearSession,
   } = useMeetingSync({
@@ -232,18 +244,74 @@ export default function Home() {
     r.stage === 'closed' ||
     today >= (r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1));
   const notify = (s: string) => setToast(s);
-  function openRoom(r: Room) {
+  function openRoom(r: Room, as = user) {
     setEditingSchedule(false);
     setActive(r.id);
-    setSelected(r.responses[user] || []);
+    setSelected(r.responses[as] || []);
     setRegionDraft(
-      reconcileRegionVoteDraft({ context: '', choices: [] }, r, user),
+      reconcileRegionVoteDraft({ context: '', choices: [] }, r, as),
     );
     setExpandedDateContext('');
     setChosen(r.start < today ? today : r.start);
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
   }
+  // Uses only the snapshot just received for this session, never an older list.
+  function enterRoom(snapshot: MeetingSnapshot) {
+    const id = roomEntry.current;
+    if (id === null || !snapshot.user) return;
+    roomEntry.current = null;
+    window.history.replaceState(null, '', '/');
+    const target = snapshot.rooms.find((r) => r.id === id);
+    if (target && target.members.includes(snapshot.user) && !expired(target))
+      openRoom(target, snapshot.user);
+    else {
+      setView('home');
+      changeSheet(null);
+      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+    }
+  }
+  // A notification click on an open window: fetch the list again first.
+  async function openFromWorker(message: unknown) {
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      (message as { type?: unknown }).type !== 'wwm-open-room'
+    )
+      return;
+    const url = (message as { url?: unknown }).url;
+    if (typeof url !== 'string') return;
+    const id = new URL(url, window.location.origin).searchParams.get('room');
+    if (id === null) return;
+    roomEntry.current = id;
+    // Before the first load or sign-in, the entry waits for that snapshot.
+    if (initialLoad.status !== 'ready' || !user) return;
+    let snapshot: MeetingSnapshot;
+    try {
+      snapshot = await refresh();
+    } catch {
+      roomEntry.current = null;
+      setToast('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.');
+      return;
+    }
+    enterRoom(snapshot);
+  }
+  const openFromWorkerRef = useRef(openFromWorker);
+  useEffect(() => {
+    enterRoomRef.current = enterRoom;
+    openFromWorkerRef.current = openFromWorker;
+  });
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const container = navigator.serviceWorker;
+    // Registration never asks for notification permission.
+    container.register('/sw.js').catch(() => {});
+    const onMessage = (event: MessageEvent) =>
+      void openFromWorkerRef.current(event.data);
+    container.addEventListener('message', onMessage);
+    container.startMessages();
+    return () => container.removeEventListener('message', onMessage);
+  }, []);
   async function login() {
     const data = await send(
       signup
@@ -254,6 +322,8 @@ export default function Home() {
     replaceSession(data);
     setPin('');
     setView(code ? 'join' : 'home');
+    if (code) roomEntry.current = null;
+    else enterRoom(data);
   }
   async function create() {
     const data = await send({
