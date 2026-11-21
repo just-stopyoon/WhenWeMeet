@@ -79,26 +79,22 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
-  // A /?room= entry waits here until a signed-in snapshot arrives (S3).
-  const roomEntry = useRef<string | null>(null);
-  const enterRoomRef = useRef<(snapshot: MeetingSnapshot) => void>(() => {});
+  // The latest /?room= entry (S3). after is the last request id when it
+  // arrived: only a signed-in list from a later request may consume it.
+  const roomEntry = useRef<{ room: string; after: number } | null>(null);
+  const consumeEntryRef = useRef<
+    (snapshot: MeetingSnapshot, requestId: number) => void
+  >(() => {});
   const onInitialLoad = useCallback(
-    (
-      snapshot: MeetingSnapshot,
-      invite: string | null,
-      entry: string | null,
-    ) => {
+    (snapshot: MeetingSnapshot, invite: string | null, requestId: number) => {
       if (invite) setCode(invite.toUpperCase());
-      // An invite wins over a room entry; the room entry is dropped.
-      if (invite) roomEntry.current = null;
-      else if (entry !== null) roomEntry.current = entry;
       changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
-      if (snapshot.user && !invite) enterRoomRef.current(snapshot);
+      consumeEntryRef.current(snapshot, requestId);
     },
     [],
   );
   const onRefresh = useCallback(
-    (snapshot: MeetingSnapshot) => {
+    (snapshot: MeetingSnapshot, requestId: number) => {
       if (view === 'room' && !snapshot.rooms.some((r) => r.id === active)) {
         changeView('home');
         changeSheet(null);
@@ -108,6 +104,7 @@ export default function Home() {
         changeView('login');
         changeSheet(null);
       }
+      consumeEntryRef.current(snapshot, requestId);
     },
     [view, active],
   );
@@ -125,7 +122,8 @@ export default function Home() {
     rooms,
     busy,
     send,
-    refresh,
+    requestRefresh,
+    requestId,
     replaceSession,
     clearSession,
   } = useMeetingSync({
@@ -256,63 +254,79 @@ export default function Home() {
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
   }
-  // Uses only the snapshot just received for this session, never an older list.
-  function enterRoom(snapshot: MeetingSnapshot) {
-    const id = roomEntry.current;
-    if (id === null || !snapshot.user) return;
+  // Consumes the room entry with a signed-in list read after it arrived.
+  function consumeEntry(snapshot: MeetingSnapshot, requestId: number) {
+    const entry = roomEntry.current;
+    if (!entry || !snapshot.user || requestId <= entry.after) return;
     roomEntry.current = null;
     window.history.replaceState(null, '', '/');
-    const target = snapshot.rooms.find((r) => r.id === id);
+    changeSheet(null);
+    const target = snapshot.rooms.find((r) => r.id === entry.room);
     if (target && target.members.includes(snapshot.user) && !expired(target))
       openRoom(target, snapshot.user);
     else {
       setView('home');
-      changeSheet(null);
       setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
     }
   }
-  // A notification click on an open window: fetch the list again first.
-  async function openFromWorker(message: unknown) {
+  // A notification click on an open window. Only the same-origin root with
+  // ?room= or ?join= is read; anything else goes to the root screen.
+  function openFromWorker(message: unknown) {
     if (
       !message ||
       typeof message !== 'object' ||
       (message as { type?: unknown }).type !== 'wwm-open-room'
     )
       return;
-    const url = (message as { url?: unknown }).url;
-    if (typeof url !== 'string') return;
-    const id = new URL(url, window.location.origin).searchParams.get('room');
-    if (id === null) return;
-    roomEntry.current = id;
-    // Before the first load or sign-in, the entry waits for that snapshot.
-    if (initialLoad.status !== 'ready' || !user) return;
-    let snapshot: MeetingSnapshot;
+    const raw = (message as { url?: unknown }).url;
+    let params: URLSearchParams | null = null;
     try {
-      snapshot = await refresh();
+      const url = new URL(
+        typeof raw === 'string' ? raw : '/',
+        window.location.origin,
+      );
+      if (url.origin === window.location.origin && url.pathname === '/')
+        params = url.searchParams;
     } catch {
+      params = null;
+    }
+    const ready = initialLoad.status === 'ready';
+    const invite = params?.get('join');
+    const room = params?.get('room') ?? null;
+    if (invite || room === null) {
       roomEntry.current = null;
-      setToast('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.');
+      changeSheet(null);
+      // An invite wins over a room, as on a fresh window.
+      if (invite) setCode(invite.toUpperCase());
+      else window.history.replaceState(null, '', '/');
+      if (ready) setView(user ? (invite ? 'join' : 'home') : 'login');
       return;
     }
-    enterRoom(snapshot);
+    roomEntry.current = { room, after: requestId() };
+    requestRefresh();
   }
   const openFromWorkerRef = useRef(openFromWorker);
   useEffect(() => {
-    enterRoomRef.current = enterRoom;
+    consumeEntryRef.current = consumeEntry;
     openFromWorkerRef.current = openFromWorker;
   });
   useEffect(() => {
+    // Recorded before the first list arrives; a later message replaces it.
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('join') && params.has('room'))
+      roomEntry.current = { room: params.get('room') ?? '', after: 0 };
     if (!('serviceWorker' in navigator)) return;
     const container = navigator.serviceWorker;
     // Registration never asks for notification permission.
     container.register('/sw.js').catch(() => {});
     const onMessage = (event: MessageEvent) =>
-      void openFromWorkerRef.current(event.data);
+      openFromWorkerRef.current(event.data);
     container.addEventListener('message', onMessage);
     container.startMessages();
     return () => container.removeEventListener('message', onMessage);
   }, []);
   async function login() {
+    const before = requestId();
     const data = await send(
       signup
         ? { type: 'signup', name: accountId.trim(), nickname: nick.trim(), pin }
@@ -322,8 +336,8 @@ export default function Home() {
     replaceSession(data);
     setPin('');
     setView(code ? 'join' : 'home');
-    if (code) roomEntry.current = null;
-    else enterRoom(data);
+    // A pending room entry wins over a leftover join form value.
+    consumeEntry(data, before + 1);
   }
   async function create() {
     const data = await send({
@@ -499,6 +513,7 @@ export default function Home() {
   }
   async function logout() {
     if (!(await send({ type: 'logout' }))) return;
+    roomEntry.current = null;
     clearSession();
     setView('login');
     setSheet(null);

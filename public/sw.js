@@ -68,6 +68,7 @@ async function openTarget(clients, origin, target) {
     await clients.openWindow(target);
     return;
   }
+  // The open window gets '/' too, and then shows its root screen.
   let focused = open;
   try {
     focused = (await open.focus()) ?? open;

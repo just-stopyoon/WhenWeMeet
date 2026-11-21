@@ -9,14 +9,15 @@ import type {
 
 // Keep callbacks stable so input renders do not restart the initial request
 // or polling timer. onRefresh may change with the current view and room.
+// requestId numbers every request in start order (lists and saves), so a
+// caller can tell whether a list was read after some event.
 type MeetingSyncOptions = {
-  // roomEntry is the /?room= value; it is null whenever an invite is present.
   onInitialLoad: (
     snapshot: MeetingSnapshot,
     inviteCode: string | null,
-    roomEntry: string | null,
+    requestId: number,
   ) => void;
-  onRefresh: (snapshot: MeetingSnapshot) => void;
+  onRefresh: (snapshot: MeetingSnapshot, requestId: number) => void;
   onPollError: (message: string) => void;
   onSaveStart: () => void;
   onSaveError: (message: string) => void;
@@ -36,7 +37,6 @@ type InitialLifecycle = {
   ready: boolean;
   attempt: number;
   invite: string | null | undefined;
-  room: string | null;
   request: InitialRequest | null;
 };
 
@@ -58,12 +58,14 @@ export function useMeetingSync({
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const generation = useRef(0);
+  const requestSeq = useRef(0);
+  const appliedRequest = useRef(0);
+  const refreshWanted = useRef(false);
   const initial = useRef<InitialLifecycle>({
     mounted: false,
     ready: false,
     attempt: 0,
     invite: undefined,
-    room: null,
     request: null,
   });
 
@@ -78,28 +80,47 @@ export function useMeetingSync({
     setNickname('');
   }, []);
 
-  // Returns the fetched snapshot even when a save made it too old to apply.
+  // A list is applied only when no save started meanwhile and no list from a
+  // later request has been applied already.
   const refresh = useCallback(async () => {
     const stamp = generation.current;
+    const requestId = ++requestSeq.current;
     const snapshot = await meetingApi();
-    if (!pending.current && generation.current === stamp) {
-      replaceSession(snapshot);
-      onRefresh(snapshot);
-    }
-    return snapshot;
+    if (
+      pending.current ||
+      generation.current !== stamp ||
+      requestId < appliedRequest.current
+    )
+      return;
+    appliedRequest.current = requestId;
+    replaceSession(snapshot);
+    onRefresh(snapshot, requestId);
   }, [onRefresh, replaceSession]);
+
+  // An extra list request (for example a notification click). During a save
+  // it waits and runs once the save has finished.
+  const requestRefresh = useCallback(() => {
+    if (!initial.current.ready) return;
+    if (pending.current) {
+      refreshWanted.current = true;
+      return;
+    }
+    refresh().catch(() =>
+      onPollError('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.'),
+    );
+  }, [refresh, onPollError]);
+  const requestId = useCallback(() => requestSeq.current, []);
 
   const loadInitial = useCallback(
     (retrying = false) => {
       const lifecycle = initial.current;
       if (!lifecycle.mounted || lifecycle.ready || lifecycle.request) return;
-      // Read once so failed attempts and retries keep the same entry.
-      if (lifecycle.invite === undefined) {
-        const params = new URLSearchParams(window.location.search);
-        lifecycle.invite = params.get('join');
-        lifecycle.room = lifecycle.invite ? null : params.get('room');
-      }
+      if (lifecycle.invite === undefined)
+        lifecycle.invite = new URLSearchParams(window.location.search).get(
+          'join',
+        );
       const attempt = ++lifecycle.attempt;
+      const requestId = ++requestSeq.current;
       const request: InitialRequest = { controller: new AbortController() };
       const isCurrent = () =>
         lifecycle.mounted && lifecycle.attempt === attempt;
@@ -132,8 +153,9 @@ export function useMeetingSync({
           )
             throw new Error('Invalid initial snapshot');
           finish();
+          appliedRequest.current = requestId;
           replaceSession(snapshot);
-          onInitialLoad(snapshot, lifecycle.invite ?? null, lifecycle.room);
+          onInitialLoad(snapshot, lifecycle.invite ?? null, requestId);
           lifecycle.ready = true;
           setInitialLoad({ status: 'ready' });
         })
@@ -183,6 +205,7 @@ export function useMeetingSync({
     if (!initial.current.ready || pending.current) return null;
     pending.current = true;
     generation.current++;
+    requestSeq.current++;
     setBusy(true);
     onSaveStart();
     try {
@@ -206,6 +229,10 @@ export function useMeetingSync({
     } finally {
       pending.current = false;
       setBusy(false);
+      if (refreshWanted.current) {
+        refreshWanted.current = false;
+        requestRefresh();
+      }
     }
   }
 
@@ -213,7 +240,8 @@ export function useMeetingSync({
     ready,
     initialLoad,
     retryInitialLoad,
-    refresh,
+    requestRefresh,
+    requestId,
     user,
     nickname,
     rooms,

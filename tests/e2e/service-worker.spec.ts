@@ -296,3 +296,70 @@ test('오래 열린 창에 알림 클릭 메시지가 오면 목록을 새로 �
     if (left) await action(host, { type: 'close', roomId: left.id });
   }
 });
+
+// One synthesized push through the real registered listener (CDP
+// ServiceWorker.deliverPushMessage), so the listener must call the handler.
+// Only the display is replaced; OS notifications are out of reach here.
+test('등록된 push 리스너는 합성 push 메시지로 처리기를 거쳐 알림을 보인다', async ({
+  page,
+  context,
+  accounts,
+}) => {
+  await context.addCookies(accounts[0].storageState.cookies);
+  const cdp = await context.newCDPSession(page);
+  const registrations: { registrationId: string; scopeURL: string }[] = [];
+  cdp.on('ServiceWorker.workerRegistrationUpdated', (event) => {
+    registrations.push(...event.registrations);
+  });
+  await cdp.send('ServiceWorker.enable');
+  const worker = await registeredWorker(page, context);
+  const origin = new URL(worker.url()).origin;
+  await expect
+    .poll(() => registrations.some((r) => r.scopeURL === origin + '/'))
+    .toBe(true);
+  const registrationId = registrations.find(
+    (r) => r.scopeURL === origin + '/',
+  )!.registrationId;
+  await worker.evaluate(() => {
+    const scope = globalThis as unknown as {
+      shownByListener: unknown[];
+      registration: { showNotification: unknown };
+    };
+    scope.shownByListener = [];
+    scope.registration.showNotification = async (
+      title: string,
+      options: unknown,
+    ) => {
+      scope.shownByListener.push({ title, options });
+    };
+  });
+  await cdp.send('ServiceWorker.deliverPushMessage', {
+    origin,
+    registrationId,
+    data: JSON.stringify({
+      title: '합성 모임',
+      body: '모두 일정을 제출했어요. 날짜를 정해 주세요.',
+      tag: 'room-9',
+      url: '/?room=room-9',
+    }),
+  });
+  await expect
+    .poll(() =>
+      worker.evaluate(
+        () =>
+          (globalThis as unknown as { shownByListener: unknown[] })
+            .shownByListener,
+      ),
+    )
+    .toEqual([
+      {
+        title: '합성 모임',
+        options: {
+          body: '모두 일정을 제출했어요. 날짜를 정해 주세요.',
+          tag: 'room-9',
+          icon: '/icons/icon-192.png',
+          data: { url: '/?room=room-9' },
+        },
+      },
+    ]);
+});
