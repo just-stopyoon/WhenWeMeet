@@ -150,8 +150,13 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   try {
-    if (req.headers.get('origin') !== new URL(req.url).origin)
+    if (req.headers.get('origin') !== new URL(req.url).origin) {
+      // Drain the unread body first: under local wrangler dev an unread body
+      // breaks the next request on the connection with a 503 (issue #13).
+      // body.cancel() did not prevent it; reading the body did.
+      await req.arrayBuffer().catch(() => {});
       return reply({ error: '허용되지 않은 요청이에요.' }, 403);
+    }
     const raw = await req.text();
     if (raw.length > 20000) return reply({ error: '요청이 너무 커요.' }, 413);
     // This property bag is not a validated MeetingRequest. Preserve the runtime
