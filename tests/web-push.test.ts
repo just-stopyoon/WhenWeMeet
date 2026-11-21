@@ -323,17 +323,30 @@ void test('VAPID aud는 구독 주소마다 그 origin이다', async () => {
       subscription('https://updates.push.services.mozilla.com/wpush/v2/gAAA'),
     ],
   });
-  const audiences = calls.map(({ init }) => {
+  // Requests start in completion order of parallel signing, so pair each
+  // audience with its URL instead of relying on call order.
+  const audiences = calls.map(({ url, init }) => {
     const value = (init.headers as Record<string, string>).Authorization;
     const claims = /t=[^.]+\.([^.]+)\./.exec(value)?.[1] ?? '';
-    return (
-      JSON.parse(new TextDecoder().decode(bytes(claims))) as { aud: string }
-    ).aud;
+    return [
+      url,
+      (JSON.parse(new TextDecoder().decode(bytes(claims))) as { aud: string })
+        .aud,
+    ];
   });
-  assert.deepEqual(audiences, [
-    'https://web.push.apple.com',
-    'https://updates.push.services.mozilla.com',
-  ]);
+  assert.deepEqual(
+    audiences.sort(([a], [b]) => a.localeCompare(b)),
+    [
+      [
+        'https://updates.push.services.mozilla.com/wpush/v2/gAAA',
+        'https://updates.push.services.mozilla.com',
+      ],
+      [
+        'https://web.push.apple.com/QGuQyavXutnMH',
+        'https://web.push.apple.com',
+      ],
+    ],
+  );
 });
 
 // --- result classes ---------------------------------------------------------
