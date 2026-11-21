@@ -72,12 +72,34 @@ function isOpenableRoom(room: Room) {
     !!value && typeof value === 'object' && !Array.isArray(value);
   const recordOf = (value: unknown, item: (entry: unknown) => boolean) =>
     record(value) && Object.values(value).every(item);
+  // A day that exists on the calendar (the screen formats and adds days).
+  const day = (value: unknown) => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+      return false;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.toISOString().slice(0, 10) === value
+    );
+  };
   const slot = (value: unknown) =>
-    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}\|(점심|저녁)$/.test(value);
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}\|(점심|저녁)$/.test(value) &&
+    day(value.split('|')[0]);
+  // The saving contract: absolute http(s) URLs (the cards parse them).
+  const httpUrl = (value: unknown) => {
+    if (typeof value !== 'string') return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
   const link = (value: unknown) =>
     record(value) &&
     typeof value.id === 'string' &&
-    typeof value.url === 'string' &&
+    httpUrl(value.url) &&
     typeof value.name === 'string' &&
     (value.category === 'food' || value.category === 'cafe');
   const stage = r.stage;
@@ -91,8 +113,8 @@ function isOpenableRoom(room: Room) {
     typeof r.code === 'string' &&
     typeof r.title === 'string' &&
     typeof r.host === 'string' &&
-    typeof r.start === 'string' &&
-    typeof r.end === 'string' &&
+    day(r.start) &&
+    day(r.end) &&
     typeof r.size === 'number' &&
     typeof r.round === 'number' &&
     (r.regionRevision === undefined || typeof r.regionRevision === 'number') &&
@@ -345,7 +367,14 @@ export default function Home() {
   }
   // An open prompt closes once the state has no prompt (e.g. a re-sync made
   // it on, or the key went missing); focus then follows the closing rule.
-  if (sheet === 'push' && push.state !== 'off' && push.state !== 'unsupported')
+  // ("preparing" is a lookup still running: the decision waits, it does not
+  // close the sheet.)
+  if (
+    sheet === 'push' &&
+    push.state !== 'off' &&
+    push.state !== 'unsupported' &&
+    push.state !== 'preparing'
+  )
     changeSheet(null);
   function setRegionVotes(choices: string[]) {
     if (room)

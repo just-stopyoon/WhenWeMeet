@@ -306,6 +306,25 @@ for (const [name, room] of [
     '지역 투표 단계의 votes 값이 숫자',
     { ...finalRoom, stage: 'region', region: undefined, votes: { friend: 3 } },
   ],
+  // Saved links are absolute http(s) URLs; the cards parse them.
+  [
+    '확정 단계 링크가 상대 주소',
+    { ...finalRoom, links: [{ ...finalRoom.links[0], url: '/a' }] },
+  ],
+  [
+    '확정 단계 링크가 빈 문자열',
+    { ...finalRoom, links: [{ ...finalRoom.links[0], url: '' }] },
+  ],
+  [
+    '확정 단계 링크가 http(s)가 아님',
+    {
+      ...finalRoom,
+      links: [{ ...finalRoom.links[0], url: 'javascript:alert(1)' }],
+    },
+  ],
+  // The slot's shape is right but the day does not exist.
+  ['확정 단계 날짜가 달력에 없음', { ...finalRoom, date: '2099-99-99|저녁' }],
+  ['확정 단계 날짜가 2월 30일', { ...finalRoom, date: '2099-02-30|점심' }],
 ] as const) {
   test(`/?room= 대상 모임이 단계별 필수값을 갖추지 못하면(${name}) 열지 않고 홈과 기존 토스트를 보인다`, async ({
     page,

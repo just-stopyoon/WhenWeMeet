@@ -163,6 +163,10 @@ export function usePushNotifications({
   // lookups are superseded: their results and their waiting are ignored.
   const lookupId = useRef(0);
   const settledId = useRef(0);
+  // The same two numbers for rendering: while the latest lookup has not
+  // ended, the state is "preparing" (state table row 5).
+  const [lookupStarted, setLookupStarted] = useState(0);
+  const [lookupSettled, setLookupSettled] = useState(0);
 
   // Reads the device's real subscription. Resolves with it when this is
   // still the latest lookup and it succeeded; undefined otherwise.
@@ -170,6 +174,8 @@ export function usePushNotifications({
     if (!pushApis()) return undefined;
     const id = ++lookupId.current;
     const started = epochRef.current;
+    // Not inside the caller's effect: the render shows it on the next turn.
+    queueMicrotask(() => setLookupStarted(id));
     try {
       const registration = await navigator.serviceWorker.ready;
       let subscription: PushSubscription | null = null;
@@ -189,6 +195,7 @@ export function usePushNotifications({
       }
       if (id !== lookupId.current) return undefined;
       settledId.current = id;
+      setLookupSettled(id);
       setDevice({
         ready: true,
         registration,
@@ -199,6 +206,10 @@ export function usePushNotifications({
       });
       return ok ? subscription : undefined;
     } catch {
+      if (id === lookupId.current) {
+        settledId.current = id;
+        setLookupSettled(id);
+      }
       return undefined;
     } finally {
       setTick((value) => value + 1);
@@ -268,7 +279,13 @@ export function usePushNotifications({
   else if (!publicKey || (serverKey && !serverKey.canonical)) state = 'nokey';
   else if (supported === false) state = 'unsupported';
   else if (permission === 'denied') state = 'denied';
-  else if (supported === null || !deviceCurrent || !serverKey || deviceOps > 0)
+  else if (
+    supported === null ||
+    !deviceCurrent ||
+    !serverKey ||
+    deviceOps > 0 ||
+    lookupStarted > lookupSettled
+  )
     state = 'preparing';
   else if (
     matches &&
@@ -417,7 +434,15 @@ export function usePushNotifications({
       if (!quiet()) return;
       const existing = await found?.pushManager?.getSubscription();
       if (!quiet() || !existing) return;
-      await existing.unsubscribe();
+      // Once called, the removal holds this device's re-sync and "on" until
+      // it ends; then whoever is signed in now reads the real subscription.
+      setDeviceOps((value) => value + 1);
+      try {
+        await existing.unsubscribe();
+      } finally {
+        setDeviceOps((value) => value - 1);
+        void lookup();
+      }
     })().catch(() => {});
   }
 

@@ -1065,6 +1065,80 @@ test('먼저 시작한 조회가 끝나지 않아도 최신 조회가 성공하�
   await expectRow(page, 'on');
 });
 
+// An already-called native removal at logout keeps the device "preparing"
+// (no re-sync, no on) until it ends, then the current session reads the real
+// subscription (final re-review Spec 1). logout and sign-in do not wait.
+for (const after of [
+  'logout 실패로 같은 계정이 남음',
+  '같은 탭에서 다른 계정으로 로그인',
+] as const) {
+  test(`로그아웃 때 시작한 기기 해지가 끝나기 전에는 그 구독을 다시 등록하거나 켜짐으로 보이지 않는다(${after})`, async ({
+    page,
+    playwright,
+    baseURL,
+  }) => {
+    const account = await pushAccount(playwright, baseURL);
+    const key = await serverKey(account);
+    const router = await installRouter(page);
+    await openOn(page, account, key);
+    await setControl(page, { holdUnsubscribe: true });
+    if (after === 'logout 실패로 같은 계정이 남음') {
+      router.fake.logout = {
+        status: 503,
+        json: { error: '잠시 후 다시 시도해 주세요.' },
+      };
+      const dialog = await openAccountSheet(page);
+      await dialog.getByRole('button', { name: '로그아웃' }).click();
+      await expect(page.locator('.toast')).toHaveText(
+        '잠시 후 다시 시도해 주세요.',
+      );
+      await closeSheet(page);
+    } else {
+      await switchAccount(page, router, key);
+    }
+    // The removal was called and is still running.
+    expect((await control(page)).log).toEqual(['unsubscribe']);
+    await settle(page);
+    expect(posts(router, 'pushSubscribe')).toHaveLength(1);
+    await expectRow(page, 'preparing');
+    await release(page, 'releaseUnsubscribe');
+    await expectRow(page, 'off');
+    await settle(page);
+    expect(posts(router, 'pushSubscribe')).toHaveLength(1);
+    expect(await control(page)).toMatchObject({ subscribed: false });
+  });
+}
+
+test('최신 구독 조회가 끝나기 전에는 이전 결과로 켜짐·꺼짐을 보이지 않고 준비 중으로 본다', async ({
+  page,
+  playwright,
+  baseURL,
+}) => {
+  const account = await pushAccount(playwright, baseURL);
+  await openOn(page, account, await serverKey(account));
+  await expectRow(page, 'on');
+  // The device lost the subscription; the tab-return lookup is slow.
+  await page.evaluate(() => {
+    const push = (window as unknown as { __push: PushControl }).__push;
+    push.subscription = null;
+    push.holdNextLookup = true;
+  });
+  await page.evaluate(() => {
+    const set = (value: DocumentVisibilityState) => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => value,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    set('hidden');
+    set('visible');
+  });
+  await expectRow(page, 'preparing');
+  await release(page, 'releaseLookup');
+  await expectRow(page, 'off');
+});
+
 test('모임 만들기·참가 직후 꺼짐이면 바텀시트가 한 번 뜨고 "나중에" 뒤에는 그 기기에서 뜨지 않는다', async ({
   page,
   accounts,
