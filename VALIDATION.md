@@ -12,7 +12,7 @@
 | 1. 새 테스트      | 위 `test:all` 출력                                                                                                                                                                            | 검사 지점 1–2: `tests/web-push.test.ts`·`push-notices.test.ts`·`push-store.test.ts`·`push-dispatch.test.ts`, 3: `tests/api/push.spec.ts`·`push-dispatch.spec.ts`·`service-worker.spec.ts`, 4: `tests/api/gateway.spec.ts`의 `/sw.js` 5개, 5: `tests/e2e/push-ui.spec.ts`(30개 × 360·430)·`service-worker.spec.ts`·`room-entry.spec.ts`(단계별 필수값·링크 주소·달력 날짜 9개 포함) 모두 통과. 최종 리뷰 회귀: `tests/web-push.test.ts`의 구독별 10초 결과 1개 |
 | 1. 외부 발송 0회  | `awk '$0 == "WEB_PUSH_SEND_BLOCKED_AT_START" { start = 1 } /WEB_PUSH_NETWORK_ATTEMPT/ { network++ } END { exit !(start && network == 0) }' test-artifacts/server.log` (위와 같은 실행의 로그) | exit 0. 차단 시작 줄 1, 실제 네트워크 시도 줄 0, 차단된 시도 1(R9 양성 대조), 발송 완료 1. 거짓 통과 검사: 시작 줄을 뺀 로그·네트워크 줄을 더한 로그에서 각각 exit 1                                                                                                                                                                                                                                                                                          |
 | 1. 로그인 시도 수 | 같은 실행의 임시 D1을 읽기 전용으로 1초마다 복사해 `attempts` 표를 읽음                                                                                                                       | 같은 IP 로그인·회원가입 합계 44회(서버 한도 50, 한도·검사는 바꾸지 않음)                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1. PR CI          | `Tests` workflow                                                                                                                                                                              | PR을 연 뒤 확인(아직 없음)                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1. PR CI          | `Tests` workflow                                                                                                                                                                              | 성공. run [44913397386](https://github.com/just-stopyoon/WhenWeMeet/actions/runs/44913397386), head `3891840`(2026-11-21T14:20:17Z–14:29:11Z). 단위 136개·Playwright 252개 통과, 건너뜀 0. CDP 합성 push 테스트도 Linux에서 두 폭 모두 통과 |
 | 2. 게이트웨이     | `node --check api/gateway.js && node scripts/build-vercel.mjs` (`3bc8af8`)                                                                                                                    | exit 0                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 4. 공백           | `git diff --check 2643cce...HEAD`, 새 파일은 stage 뒤 `git diff --cached --check`                                                                                                             | 모두 통과                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
@@ -71,11 +71,24 @@
 - 실제 잠금 화면·알림 센터의 알림은 헤드리스가 표시하지 않아 사람 확인(Q17)·배포 후 확인(Q18)으로 넘깁니다.
 - 사용자 승인: 2026-11-21 PR을 열기 전에 사용자가 폭별 전·후 비교 이미지(`compare-360.png`·`compare-430.png`)로 화면을 판정했고 결과는 "통과"입니다.
 
+### 사람 확인(회의 Q17, 참고 확인)
+
+2026-11-21 PR #15를 연 뒤 사용자가 이 Mac의 Chrome 두 계정(A 기본 프로필, B 다른 프로필·시크릿 창)으로 확인했습니다. 감독이 이슈 R8 절차대로 `npm run build` → 로컬 D1에 `0000`·`0001`·`0002` 적용(모두 exit 0) → `npx wrangler dev --config dist/server/wrangler.json --port 8787`(발송 차단 설정 없음, 실제 푸시 서비스로 발송)을 띄웠고, macOS 26.6.2입니다. 로컬 D1만 썼습니다.
+
+| 항목 | 결과 |
+|---|---|
+| 1. 켜기: 모임 만든 직후 바텀시트 [알림 켜기] → 권한 허용 → "알림 켜짐" | 통과 |
+| 2. 양성: A 먼저 제출 → B 참가·마지막 제출 → A가 일정 마감 알림(제목 방 이름) 수신 | 통과 |
+| 3. 열기: 알림을 눌러 A의 창에서 그 모임 열림 | 통과 |
+| 4. 음성: A 끄기 → 새 모임에서 같은 순서 → A 미수신 | 통과 |
+
+- 사용자 답 원문: "모두 잘 돼". Chrome 버전과 항목별 세부 화면은 기록되지 않았습니다.
+
 ### 미검증
 
-- 실제 푸시 서비스로의 발송과 기기의 실제 수신·잠금 화면 표시·알림 클릭: 자동 테스트는 발송 차단 설정으로 서명·암호화까지만 거칩니다. 사람 확인(회의 Q17, Mac Chrome localhost, 참고 확인)과 배포 후 확인(회의 Q18, iPhone 13 홈 화면 앱·Vercel `/sw.js`·0002 적용)은 아직 하지 않았습니다.
+- 실제 푸시 서비스로의 발송과 기기의 실제 수신·잠금 화면 표시·알림 클릭: 자동 테스트는 발송 차단 설정으로 서명·암호화까지만 거칩니다. Mac Chrome localhost의 실제 수신은 아래 "사람 확인"에서 사용자가 확인했습니다. 배포 후 확인(회의 Q18, iPhone 13 홈 화면 앱·Vercel `/sw.js`·0002 적용)은 아직 하지 않았습니다.
 - 남은 위험: 실제 iPhone Safari도 Playwright WebKit처럼 `getSubscription()`이 끝나지 않으면 배포 뒤 "준비 중"에서 멈출 수 있습니다. 배포 후 확인 Q18 5번에서 확인하고, 같으면 후속으로 고칩니다.
-- 이벤트 합성의 한계: push는 CDP `ServiceWorker.deliverPushMessage`로 등록된 리스너 경로까지 확인했고(표시만 대역), `notificationclick`은 합성하지 않고 이름 있는 처리기를 가짜 이벤트·`clients`(실제 `self.clients` 포함)로 직접 불러 확인했습니다. 실제 OS 알림 클릭의 사용자 활성화(창 초점 허용)는 확인하지 못했습니다. CDP 합성 push는 macOS에서만 돌렸고 CI(Linux headless)에서는 PR CI에서 처음 확인됩니다.
+- 이벤트 합성의 한계: push는 CDP `ServiceWorker.deliverPushMessage`로 등록된 리스너 경로까지 확인했고(표시만 대역), `notificationclick`은 합성하지 않고 이름 있는 처리기를 가짜 이벤트·`clients`(실제 `self.clients` 포함)로 직접 불러 확인했습니다. 실제 OS 알림 클릭의 사용자 활성화(창 초점 허용)는 확인하지 못했습니다. CDP 합성 push는 PR CI(Linux headless)에서도 통과했습니다.
 - 알림 화면 e2e는 브라우저 API(`Notification.permission`·`PushManager`·service worker 준비)를 페이지 시작 전 스크립트로 바꾼 결과입니다. 계정이 바뀌는 경쟁 시나리오 4개와 저장 중 로그아웃 시나리오 1개는 다른 계정의 로그인·로그아웃 응답을 라우터가 대신했습니다(구독 저장은 실제 API/D1).
 - 구독 저장 단위 테스트의 `node:sqlite` 대역은 Workers isolate 사이의 동시성, D1 `batch()`의 트랜잭션 의미, 오류 문구를 재현하지 않습니다. 실제 D1 동시 실행은 하지 않았습니다.
 - Android Chrome 실기기는 없어 확인하지 못했습니다.
