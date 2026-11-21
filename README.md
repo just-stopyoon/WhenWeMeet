@@ -169,6 +169,9 @@ npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file dri
 npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0002_push_subscriptions.sql
 ```
 
-`0002`는 알림 구독 테이블과 VAPID 키 테이블만 새로 만들므로, 이미 쓰던 로컬 D1에 적용해도 기존 계정·모임은 그대로 남습니다. 적용하지 않은 D1에서도 조회·로그인·회원가입은 지금처럼 동작하지만, 응답에 알림 공개 키(`pushPublicKey`)가 빠져 알림 UI가 숨겨집니다. 적용했는지는 로그인한 상태의 `/api/meeting` GET 응답에 `pushPublicKey`가 있는지로 확인합니다.
+`0002`는 알림 구독 테이블과 VAPID 키 테이블만 새로 만들므로, 이미 쓰던 로컬 D1에 적용해도 기존 계정·모임은 그대로 남습니다. 적용하지 않은 D1에서도 조회·로그인·회원가입은 지금처럼 동작하지만, 응답에 알림 공개 키(`pushPublicKey`)가 빠져 알림 UI가 숨겨집니다. 키 행이 손상되거나 잠시 읽지 못할 때도 같은 필드가 빠지므로, 두 가지를 따로 확인합니다.
+
+- 마이그레이션 적용: `npx wrangler d1 execute DB --local --config dist/server/wrangler.json --command "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('push_subscriptions','push_vapid_keys')"` 결과에 두 테이블이 있는지 봅니다.
+- 알림 키 사용 가능: 로그인한 상태의 `/api/meeting` GET 응답에 `pushPublicKey`가 있는지 봅니다.
 
 `npm run test:all`은 별도 임시 D1에 마이그레이션을 적용합니다. 이메일 및 푸시 알림은 이 변경에 포함하지 않습니다.

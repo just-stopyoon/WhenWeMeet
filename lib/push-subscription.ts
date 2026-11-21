@@ -78,10 +78,13 @@ export async function importReceiverKey(
 
 // One spelling per push address: only the serialised URL that `fetch` sends
 // to is accepted, so registration, removal and delivery key on one string.
+// A fragment (even an empty `#`) is never sent over HTTP, so it would split one
+// address into several rows; it is rejected rather than stripped.
 // T2 uses this for both `pushSubscribe` and `pushUnsubscribe`.
 export function checkPushEndpoint(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > maxEndpointLength)
     return null;
+  if (value.includes('#')) return null;
   if (pushHostKind(value) === null) return null;
   return new URL(value).href === value ? value : null;
 }

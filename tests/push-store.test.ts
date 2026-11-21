@@ -23,38 +23,43 @@ const migrations = [
   '0002_push_subscriptions.sql',
 ];
 
-function database(files = migrations) {
+// `delay` holds every statement back before it runs, like a D1 call waiting
+// on the network, so time passes between the call and the database work.
+function database(files = migrations, delay = 0) {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const file of files)
     sqlite.exec(readFileSync(join(process.cwd(), 'drizzle', file), 'utf8'));
+  const wait = () => new Promise((resolve) => setTimeout(resolve, delay));
   const statement = (query: string, values: unknown[] = []): SqlStatement => ({
     bind: (...next: unknown[]) => statement(query, next),
-    first: <T>() =>
-      Promise.resolve(
-        (sqlite.prepare(query).get(...(values as never[])) ?? null) as T | null,
-      ),
-    run: () =>
-      Promise.resolve({
+    first: async <T>() => {
+      await wait();
+      return (sqlite.prepare(query).get(...(values as never[])) ??
+        null) as T | null;
+    },
+    run: async () => {
+      await wait();
+      return {
         meta: {
           changes: Number(
             sqlite.prepare(query).run(...(values as never[])).changes,
           ),
         },
-      }),
+      };
+    },
   });
   const db: SqlDatabase = { prepare: (query) => statement(query) };
   return { sqlite, db };
 }
 
-const now = 1_800_000_000_000;
-const later = now + 86_400_000;
+const later = () => Date.now() + 86_400_000;
 
 function addSession(
   sqlite: DatabaseSync,
   account: string,
   token: string,
-  expires = later,
+  expires = later(),
 ) {
   sqlite
     .prepare('INSERT OR IGNORE INTO accounts(name,salt,hash) VALUES(?,?,?)')
@@ -90,7 +95,7 @@ void test('유효한 세션의 등록은 계정·세션·세대와 함께 저장
   const { sqlite, db } = database();
   addSession(sqlite, 'alice', 'hash-a1');
   assert.equal(
-    await savePushSubscription(db, 'hash-a1', record(), now, 'g1'),
+    await savePushSubscription(db, 'hash-a1', record(), 'g1'),
     'saved',
   );
   assert.deepEqual(rows(sqlite), [
@@ -110,7 +115,7 @@ void test('logout으로 지워진 세션의 늦은 등록은 행을 만들지 �
   addSession(sqlite, 'alice', 'hash-a1');
   sqlite.prepare('DELETE FROM sessions WHERE token=?').run('hash-a1');
   assert.equal(
-    await savePushSubscription(db, 'hash-a1', record(), now, 'g1'),
+    await savePushSubscription(db, 'hash-a1', record(), 'g1'),
     'session-ended',
   );
   assert.deepEqual(rows(sqlite), []);
@@ -118,9 +123,19 @@ void test('logout으로 지워진 세션의 늦은 등록은 행을 만들지 �
 
 void test('만료된 세션의 등록은 행을 만들지 않는다', async () => {
   const { sqlite, db } = database();
-  addSession(sqlite, 'alice', 'hash-a1', now);
+  addSession(sqlite, 'alice', 'hash-a1', Date.now() - 1);
   assert.equal(
-    await savePushSubscription(db, 'hash-a1', record(), now, 'g1'),
+    await savePushSubscription(db, 'hash-a1', record(), 'g1'),
+    'session-ended',
+  );
+  assert.deepEqual(rows(sqlite), []);
+});
+
+void test('쓰기가 기다리는 사이 세션이 만료되면 행을 만들지 않는다', async () => {
+  const { sqlite, db } = database(migrations, 60);
+  addSession(sqlite, 'alice', 'hash-a1', Date.now() + 20);
+  assert.equal(
+    await savePushSubscription(db, 'hash-a1', record(), 'g1'),
     'session-ended',
   );
   assert.deepEqual(rows(sqlite), []);
@@ -136,13 +151,12 @@ void test('다른 계정은 p256dh·auth가 둘 다 같을 때만 옮겨 간다'
     const { sqlite, db } = database();
     addSession(sqlite, 'alice', 'hash-a1');
     addSession(sqlite, 'bob', 'hash-b1');
-    await savePushSubscription(db, 'hash-a1', record(), now, 'g1');
+    await savePushSubscription(db, 'hash-a1', record(), 'g1');
     assert.equal(
       await savePushSubscription(
         db,
         'hash-b1',
         record('1', p256dh, auth),
-        now,
         'g2',
       ),
       moved ? 'saved' : 'owned-elsewhere',
@@ -178,9 +192,9 @@ void test('같은 계정의 다시 등록은 키·세션을 바꾸고 새 세대
   const { sqlite, db } = database();
   addSession(sqlite, 'alice', 'hash-a1');
   addSession(sqlite, 'alice', 'hash-a2');
-  await savePushSubscription(db, 'hash-a1', record(), now, 'g1');
+  await savePushSubscription(db, 'hash-a1', record(), 'g1');
   assert.equal(
-    await savePushSubscription(db, 'hash-a1', record(), now, 'g2'),
+    await savePushSubscription(db, 'hash-a1', record(), 'g2'),
     'saved',
   );
   assert.equal(rows(sqlite)[0].generation, 'g2');
@@ -189,7 +203,6 @@ void test('같은 계정의 다시 등록은 키·세션을 바꾸고 새 세대
       db,
       'hash-a2',
       record('1', 'p256dh-c', 'auth-c'),
-      now,
       'g3',
     ),
     'saved',
@@ -209,9 +222,9 @@ void test('같은 계정의 다시 등록은 키·세션을 바꾸고 새 세대
 void test('평소 세대 값은 쓸 때마다 새로 만든다', async () => {
   const { sqlite, db } = database();
   addSession(sqlite, 'alice', 'hash-a1');
-  await savePushSubscription(db, 'hash-a1', record(), now);
+  await savePushSubscription(db, 'hash-a1', record());
   const first = rows(sqlite)[0].generation;
-  await savePushSubscription(db, 'hash-a1', record(), now);
+  await savePushSubscription(db, 'hash-a1', record());
   const second = rows(sqlite)[0].generation;
   assert.match(first, /^[0-9a-f-]{36}$/);
   assert.notEqual(first, second);
@@ -221,12 +234,11 @@ void test('세션 행이 지워지면 그 세션의 구독만 연쇄 삭제된�
   const { sqlite, db } = database();
   addSession(sqlite, 'alice', 'hash-a1');
   addSession(sqlite, 'alice', 'hash-a2');
-  await savePushSubscription(db, 'hash-a1', record('1'), now, 'g1');
+  await savePushSubscription(db, 'hash-a1', record('1'), 'g1');
   await savePushSubscription(
     db,
     'hash-a2',
     record('2', 'p256dh-b', 'auth-b'),
-    now,
     'g2',
   );
   // The same statements logout and the expired-session cleanup run.
@@ -237,8 +249,8 @@ void test('세션 행이 지워지면 그 세션의 구독만 연쇄 삭제된�
   );
   sqlite
     .prepare('UPDATE sessions SET expires=? WHERE token=?')
-    .run(now - 1, 'hash-a2');
-  sqlite.prepare('DELETE FROM sessions WHERE expires < ?').run(now);
+    .run(Date.now() - 1, 'hash-a2');
+  sqlite.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());
   assert.deepEqual(rows(sqlite), []);
 });
 
@@ -246,7 +258,7 @@ void test('해지는 지금 계정의 행만 지운다', async () => {
   const { sqlite, db } = database();
   addSession(sqlite, 'alice', 'hash-a1');
   addSession(sqlite, 'bob', 'hash-b1');
-  await savePushSubscription(db, 'hash-a1', record(), now, 'g1');
+  await savePushSubscription(db, 'hash-a1', record(), 'g1');
   assert.equal(
     await removePushSubscription(db, 'bob', record().endpoint),
     false,

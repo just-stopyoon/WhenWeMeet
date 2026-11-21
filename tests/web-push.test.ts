@@ -497,6 +497,22 @@ void test('보내기 직전 구독 검사에 걸리면 보내지 않는다', asy
   ]);
 });
 
+void test('fragment가 붙은 주소는 보내기 직전 검사에서도 걸려 보내지 않는다', async () => {
+  const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
+  const { results } = await send({
+    fetch,
+    subscriptions: [
+      subscription('https://fcm.googleapis.com/fcm/send/abc#'),
+      subscription('https://fcm.googleapis.com/fcm/send/abc#frag'),
+    ],
+  });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(
+    results.map((result) => result.outcome),
+    [{ kind: 'invalid-subscription' }, { kind: 'invalid-subscription' }],
+  );
+});
+
 void test('VAPID 키를 가져오지 못하거나 암호화가 실패하면 키 실패다', async () => {
   const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
   const broken = await send({
@@ -854,6 +870,9 @@ void test('같은 주소의 다른 표기는 거절해 등록·해지·발송이
     'https://fcm.googleapis.com',
     'https:fcm.googleapis.com/fcm/send/abc',
     'https://web.push.apple.com/a b',
+    'https://fcm.googleapis.com/fcm/send/abc#',
+    'https://fcm.googleapis.com/fcm/send/abc#frag',
+    'https://web.push.apple.com/abc#',
   ]) {
     assert.equal(new URL(variant).hostname.length > 0, true, variant);
     assert.equal(checkPushEndpoint(variant), null, variant);

@@ -41,42 +41,43 @@ export function d1VapidKeyStore(db: SqlDatabase): VapidKeyStore {
 
 export type PushSaveResult = 'saved' | 'session-ended' | 'owned-elsewhere';
 
+// The database clock in epoch milliseconds, the unit of sessions.expires
+// (written from the Worker's Date.now()). Evaluated when the statement runs,
+// so a session that expires while the write waits is no longer valid.
+const databaseNow =
+  "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
+
 // One statement decides and writes (R1·R2): the row is written only while the
-// requesting session is still valid, and an endpoint held by another account
-// moves only when both p256dh and auth match. Every write gets a new
-// generation so later cleanup can tell a rewritten row from the one it read.
+// requesting session is still valid in the database, and an endpoint held by
+// another account moves only when both p256dh and auth match. Every write gets
+// a new generation so later cleanup can tell a rewritten row from the one it
+// read.
 export async function savePushSubscription(
   db: SqlDatabase,
   sessionHash: string,
   record: PushSubscriptionRecord,
-  now = Date.now(),
   generation: string = crypto.randomUUID(),
 ): Promise<PushSaveResult> {
   const result = await db
     .prepare(
       `INSERT INTO push_subscriptions(endpoint,account_id,p256dh,auth,session,generation,created)
-       SELECT ?, name, ?, ?, token, ?, ? FROM sessions WHERE token=? AND expires>?
+       SELECT ?, name, ?, ?, token, ?, ${databaseNow} FROM sessions WHERE token=? AND expires>${databaseNow}
        ON CONFLICT(endpoint) DO UPDATE SET
          account_id=excluded.account_id, p256dh=excluded.p256dh, auth=excluded.auth,
          session=excluded.session, generation=excluded.generation
        WHERE push_subscriptions.account_id=excluded.account_id
          OR (push_subscriptions.p256dh=excluded.p256dh AND push_subscriptions.auth=excluded.auth)`,
     )
-    .bind(
-      record.endpoint,
-      record.p256dh,
-      record.auth,
-      generation,
-      now,
-      sessionHash,
-      now,
-    )
+    .bind(record.endpoint, record.p256dh, record.auth, generation, sessionHash)
     .run();
   if (result.meta.changes) return 'saved';
-  // Nothing was written; this read only chooses the error status.
+  // Nothing was written; this read only chooses the error status, on the same
+  // database clock as the write.
   const session = await db
-    .prepare('SELECT 1 AS valid FROM sessions WHERE token=? AND expires>?')
-    .bind(sessionHash, now)
+    .prepare(
+      `SELECT 1 AS valid FROM sessions WHERE token=? AND expires>${databaseNow}`,
+    )
+    .bind(sessionHash)
     .first();
   return session ? 'owned-elsewhere' : 'session-ended';
 }

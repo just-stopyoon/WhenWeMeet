@@ -49,11 +49,32 @@ function expectPublicKey(value: unknown) {
   expect(bytes[0]).toBe(0x04);
 }
 
-// No response may carry the private JWK or any part of it.
+// No response may carry the private JWK: checked on the JSON structure (field
+// names at any depth, and every string that decodes as a JWK object) rather
+// than on raw text, which a random public key could match by chance.
+const privateKeyFields = ['d', 'kty', 'crv', 'privateJwk', 'private_jwk'];
 async function expectNoPrivateKey(response: APIResponse) {
-  const text = await response.text();
-  for (const marker of ['"d"', '"kty"', '"crv"', 'private', 'jwk'])
-    expect(text).not.toContain(marker);
+  const fields: string[] = [];
+  const jwkStrings: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (typeof parsed === 'object' && parsed !== null)
+          jwkStrings.push(value);
+      } catch {
+        // Not JSON: an ordinary string.
+      }
+    } else if (Array.isArray(value)) value.forEach(walk);
+    else if (typeof value === 'object' && value !== null)
+      for (const [key, entry] of Object.entries(value)) {
+        fields.push(key);
+        walk(entry);
+      }
+  };
+  walk(await response.json());
+  expect(fields.filter((key) => privateKeyFields.includes(key))).toEqual([]);
+  expect(jwkStrings).toEqual([]);
 }
 
 test.describe('Web Push 구독 저장', () => {
@@ -200,6 +221,8 @@ test.describe('Web Push 구독 저장', () => {
         ...valid,
         endpoint: `https://fcm.googleapis.com.example.com/fcm/send/qa-${randomUUID()}`,
       },
+      { ...valid, endpoint: `${valid.endpoint}#` },
+      { ...valid, endpoint: `${valid.endpoint}#device` },
       {
         ...valid,
         keys: { ...valid.keys, p256dh: offCurve.toString('base64url') },
@@ -217,6 +240,8 @@ test.describe('Web Push 구독 저장', () => {
     for (const endpoint of [
       valid.endpoint.replace('https:', 'http:'),
       valid.endpoint.replace('fcm.googleapis.com', 'FCM.googleapis.com'),
+      `${valid.endpoint}#`,
+      `${valid.endpoint}#device`,
       42,
       null,
       '',
@@ -306,13 +331,33 @@ test.describe('Web Push 구독 저장', () => {
       const fromS2 = await subscription();
       await expectSubscribed(await subscribe(s1, fromS1));
       await expectSubscribed(await subscribe(s2, fromS2));
+      const s1State = await first.storageState();
+      expect(
+        s1State.cookies.filter((entry) => entry.name === 'wwm_session'),
+      ).toHaveLength(1);
+      // S1's cookie kept in its own context: the logout response clears the
+      // cookie in `first`, so later requests must come from this copy.
+      const s1Kept = await playwright.request.newContext({
+        baseURL,
+        storageState: s1State,
+        extraHTTPHeaders: { Origin: baseURL! },
+      });
+      contexts.push(s1Kept);
+      const s1Late = { ...alice, request: s1Kept };
       const logout = await first.post('/api/meeting', {
         data: { type: 'logout' } satisfies MeetingRequest,
       });
       expect(logout.status()).toBe(200);
       expect(await logout.json()).toEqual({});
-      await expectError(await subscribe(s1, await subscription()), 401);
-      await expectError(await subscribe(s1, fromS1), 401);
+      expect(
+        (await s1Kept.storageState()).cookies.filter(
+          (entry) => entry.name === 'wwm_session',
+        ),
+      ).toEqual(
+        s1State.cookies.filter((entry) => entry.name === 'wwm_session'),
+      );
+      await expectError(await subscribe(s1Late, await subscription()), 401);
+      await expectError(await subscribe(s1Late, fromS1), 401);
       await expectRemoved(await unsubscribe(s2, fromS1.endpoint), false);
       await expectRemoved(await unsubscribe(s2, fromS2.endpoint), true);
     } finally {
