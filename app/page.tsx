@@ -79,31 +79,27 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
-  // The latest entry: the first URL or an open-window notification message
-  // (S3, model in issue #14 T4). When one is kept it decides where a
-  // signed-in list goes; the join form value only matters without one.
-  // after is the last request id when the entry arrived: a room entry needs
-  // a list from a later request.
-  const entry = useRef<{
-    kind: 'room' | 'join' | 'root';
-    value: string;
-    after: number;
-  } | null>(null);
-  const consumeEntryRef = useRef<
-    (snapshot: MeetingSnapshot, requestId: number) => boolean
-  >(() => false);
+  // The first URL's /?room= entry (S3). It waits here until the first load
+  // or a sign-in returns a signed-in list.
+  const roomEntry = useRef<string | null>(null);
+  const consumeEntryRef = useRef<(snapshot: MeetingSnapshot) => boolean>(
+    () => false,
+  );
   const onInitialLoad = useCallback(
-    (snapshot: MeetingSnapshot, requestId: number) => {
-      if (!snapshot.user) changeView('login');
-      else if (!consumeEntryRef.current(snapshot, requestId))
-        changeView('home');
+    (
+      snapshot: MeetingSnapshot,
+      invite: string | null,
+      entry: string | null,
+    ) => {
+      if (invite) setCode(invite.toUpperCase());
+      roomEntry.current = entry;
+      changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
+      if (snapshot.user) consumeEntryRef.current(snapshot);
     },
     [],
   );
   const onRefresh = useCallback(
-    (snapshot: MeetingSnapshot, requestId: number) => {
-      // A notification destination decides the screen and toast first.
-      if (consumeEntryRef.current(snapshot, requestId)) return;
+    (snapshot: MeetingSnapshot) => {
       if (view === 'room' && !snapshot.rooms.some((r) => r.id === active)) {
         changeView('home');
         changeSheet(null);
@@ -130,8 +126,6 @@ export default function Home() {
     rooms,
     busy,
     send,
-    requestRefresh,
-    requestId,
     replaceSession,
     clearSession,
   } = useMeetingSync({
@@ -262,100 +256,32 @@ export default function Home() {
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
   }
-  // Consumes the latest entry with a signed-in list; true when it decided
-  // the screen. A room entry needs a list read after the entry arrived.
-  function consumeEntry(snapshot: MeetingSnapshot, requestId: number) {
-    const current = entry.current;
-    if (!current || !snapshot.user) return false;
-    if (current.kind === 'room' && requestId <= current.after) return false;
-    entry.current = null;
-    changeSheet(null);
-    if (current.kind === 'join') {
-      setCode(current.value.toUpperCase());
-      setView('join');
-      return true;
-    }
+  // Opens the kept entry with a signed-in list: only my own room that the
+  // screen's closed/expired check allows; otherwise home and the existing
+  // toast. Returns false when no entry is kept.
+  function consumeEntry(snapshot: MeetingSnapshot) {
+    const id = roomEntry.current;
+    if (id === null || !snapshot.user) return false;
+    roomEntry.current = null;
     window.history.replaceState(null, '', '/');
-    const target =
-      current.kind === 'room'
-        ? snapshot.rooms.find((r) => r.id === current.value)
-        : undefined;
+    const target = snapshot.rooms.find((r) => r.id === id);
     if (target && target.members.includes(snapshot.user) && !expired(target))
       openRoom(target, snapshot.user);
     else {
       setView('home');
-      if (current.kind === 'room')
-        setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
     }
     return true;
   }
-  // A notification click on an open window. Only the same-origin root with
-  // ?room= or ?join= is read; anything else goes to the root screen.
-  function openFromWorker(message: unknown) {
-    if (
-      !message ||
-      typeof message !== 'object' ||
-      (message as { type?: unknown }).type !== 'wwm-open-room'
-    )
-      return;
-    const raw = (message as { url?: unknown }).url;
-    let params: URLSearchParams | null = null;
-    try {
-      const url = new URL(
-        typeof raw === 'string' ? raw : '/',
-        window.location.origin,
-      );
-      if (url.origin === window.location.origin && url.pathname === '/')
-        params = url.searchParams;
-    } catch {
-      params = null;
-    }
-    const invite = params?.get('join');
-    const room = params?.get('room') ?? null;
-    // An invite wins over a room, as on a fresh window.
-    entry.current = invite
-      ? { kind: 'join', value: invite, after: requestId() }
-      : room !== null
-        ? { kind: 'room', value: room, after: requestId() }
-        : { kind: 'root', value: '', after: requestId() };
-    if (entry.current.kind === 'room') {
-      requestRefresh();
-      return;
-    }
-    // Join and root need no list: apply now when signed in. Before the first
-    // load or while signed out they wait for that list or sign-in.
-    if (initialLoad.status !== 'ready') return;
-    changeSheet(null);
-    if (user) consumeEntry({ user, nickname, rooms }, Infinity);
-  }
-  const openFromWorkerRef = useRef(openFromWorker);
   useEffect(() => {
     consumeEntryRef.current = consumeEntry;
-    openFromWorkerRef.current = openFromWorker;
   });
   useEffect(() => {
-    // Recorded before the first list arrives; a later message replaces it.
-    const params = new URLSearchParams(window.location.search);
-    const invite = params.get('join');
-    if (invite) entry.current = { kind: 'join', value: invite, after: 0 };
-    else if (params.has('room'))
-      entry.current = {
-        kind: 'room',
-        value: params.get('room') ?? '',
-        after: 0,
-      };
-    if (!('serviceWorker' in navigator)) return;
-    const container = navigator.serviceWorker;
     // Registration never asks for notification permission.
-    container.register('/sw.js').catch(() => {});
-    const onMessage = (event: MessageEvent) =>
-      openFromWorkerRef.current(event.data);
-    container.addEventListener('message', onMessage);
-    container.startMessages();
-    return () => container.removeEventListener('message', onMessage);
+    if ('serviceWorker' in navigator)
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
   async function login() {
-    const before = requestId();
     const data = await send(
       signup
         ? { type: 'signup', name: accountId.trim(), nickname: nick.trim(), pin }
@@ -364,9 +290,8 @@ export default function Home() {
     if (!data) return;
     replaceSession(data);
     setPin('');
-    // A kept entry decides; without one the existing rule stands, so a code
-    // typed before the session ended still leads to the join screen.
-    if (!consumeEntry(data, before + 1)) setView(code ? 'join' : 'home');
+    // A kept entry decides; without one the existing rule stands.
+    if (!consumeEntry(data)) setView(code ? 'join' : 'home');
   }
   async function create() {
     const data = await send({
@@ -542,7 +467,6 @@ export default function Home() {
   }
   async function logout() {
     if (!(await send({ type: 'logout' }))) return;
-    entry.current = null;
     clearSession();
     setView('login');
     setSheet(null);

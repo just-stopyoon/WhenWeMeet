@@ -8,13 +8,16 @@ import type {
 } from '../lib/meeting-contract';
 
 // Keep callbacks stable so input renders do not restart the initial request
-// or polling timer. onRefresh may change with the current view and room; the
-// latest one handles every list, even one started in an older render.
-// requestId numbers every request in start order (lists and saves), so a
-// caller can tell whether a list was read after some event.
+// or polling timer. onRefresh may change with the current view and room.
 type MeetingSyncOptions = {
-  onInitialLoad: (snapshot: MeetingSnapshot, requestId: number) => void;
-  onRefresh: (snapshot: MeetingSnapshot, requestId: number) => void;
+  // roomEntry is the first URL's ?room= value; null whenever an invite is
+  // present (the invite wins).
+  onInitialLoad: (
+    snapshot: MeetingSnapshot,
+    inviteCode: string | null,
+    roomEntry: string | null,
+  ) => void;
+  onRefresh: (snapshot: MeetingSnapshot) => void;
   onPollError: (message: string) => void;
   onSaveStart: () => void;
   onSaveError: (message: string) => void;
@@ -33,28 +36,10 @@ type InitialLifecycle = {
   mounted: boolean;
   ready: boolean;
   attempt: number;
+  invite: string | null | undefined;
+  room: string | null;
   request: InitialRequest | null;
 };
-
-// The session and list fields the screen reads. The first load, polls and
-// notification lists share this check; anything else counts as a failure.
-function isSnapshot(value: unknown): value is MeetingSnapshot {
-  if (!value || typeof value !== 'object') return false;
-  const snapshot = value as Partial<Record<keyof MeetingSnapshot, unknown>>;
-  return (
-    typeof snapshot.user === 'string' &&
-    (snapshot.nickname === undefined ||
-      typeof snapshot.nickname === 'string') &&
-    Array.isArray(snapshot.rooms) &&
-    snapshot.rooms.every(
-      (room: unknown) =>
-        !!room &&
-        typeof room === 'object' &&
-        typeof (room as { id?: unknown }).id === 'string' &&
-        Array.isArray((room as { members?: unknown }).members),
-    )
-  );
-}
 
 export function useMeetingSync({
   onInitialLoad,
@@ -74,13 +59,12 @@ export function useMeetingSync({
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const generation = useRef(0);
-  const requestSeq = useRef(0);
-  const appliedRequest = useRef(0);
-  const refreshWanted = useRef(false);
   const initial = useRef<InitialLifecycle>({
     mounted: false,
     ready: false,
     attempt: 0,
+    invite: undefined,
+    room: null,
     request: null,
   });
 
@@ -95,57 +79,25 @@ export function useMeetingSync({
     setNickname('');
   }, []);
 
-  const onRefreshRef = useRef(onRefresh);
-  const onPollErrorRef = useRef(onPollError);
-  useEffect(() => {
-    onRefreshRef.current = onRefresh;
-    onPollErrorRef.current = onPollError;
-  });
-
-  // A list, or its failure, counts only when no save started meanwhile and
-  // no list from a later request has been applied already. Never rejects.
   const refresh = useCallback(async () => {
     const stamp = generation.current;
-    const requestId = ++requestSeq.current;
-    const current = () =>
-      !pending.current &&
-      generation.current === stamp &&
-      requestId > appliedRequest.current;
-    let snapshot: unknown;
-    try {
-      snapshot = await meetingApi();
-      if (!isSnapshot(snapshot)) throw new Error('Invalid snapshot');
-    } catch {
-      if (current())
-        onPollErrorRef.current(
-          '연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.',
-        );
-      return;
-    }
-    if (!current()) return;
-    appliedRequest.current = requestId;
+    const snapshot = await meetingApi();
+    if (pending.current || generation.current !== stamp) return;
     replaceSession(snapshot);
-    onRefreshRef.current(snapshot, requestId);
-  }, [replaceSession]);
-
-  // An extra list request (for example a notification click). During a save
-  // it waits and runs once the save has finished.
-  const requestRefresh = useCallback(() => {
-    if (!initial.current.ready) return;
-    if (pending.current) {
-      refreshWanted.current = true;
-      return;
-    }
-    void refresh();
-  }, [refresh]);
-  const requestId = useCallback(() => requestSeq.current, []);
+    onRefresh(snapshot);
+  }, [onRefresh, replaceSession]);
 
   const loadInitial = useCallback(
     (retrying = false) => {
       const lifecycle = initial.current;
       if (!lifecycle.mounted || lifecycle.ready || lifecycle.request) return;
+      // Read once at the first attempt so failures and retries keep it.
+      if (lifecycle.invite === undefined) {
+        const params = new URLSearchParams(window.location.search);
+        lifecycle.invite = params.get('join');
+        lifecycle.room = lifecycle.invite ? null : params.get('room');
+      }
       const attempt = ++lifecycle.attempt;
-      const requestId = ++requestSeq.current;
       const request: InitialRequest = { controller: new AbortController() };
       const isCurrent = () =>
         lifecycle.mounted && lifecycle.attempt === attempt;
@@ -169,12 +121,17 @@ export function useMeetingSync({
       void meetingApi(undefined, { signal: request.controller.signal })
         .then((snapshot) => {
           if (!isCurrent()) return;
-          if (!isSnapshot(snapshot))
+          if (
+            !snapshot ||
+            typeof snapshot.user !== 'string' ||
+            !Array.isArray(snapshot.rooms) ||
+            (snapshot.nickname !== undefined &&
+              typeof snapshot.nickname !== 'string')
+          )
             throw new Error('Invalid initial snapshot');
           finish();
-          appliedRequest.current = requestId;
           replaceSession(snapshot);
-          onInitialLoad(snapshot, requestId);
+          onInitialLoad(snapshot, lifecycle.invite ?? null, lifecycle.room);
           lifecycle.ready = true;
           setInitialLoad({ status: 'ready' });
         })
@@ -211,10 +168,12 @@ export function useMeetingSync({
     if (!ready || !user) return;
     const timer = setInterval(() => {
       if (!pending.current && document.visibilityState === 'visible')
-        void refresh();
+        refresh().catch(() =>
+          onPollError('연결이 끊겼어요. 다시 연결되면 자동으로 갱신해요.'),
+        );
     }, 4000);
     return () => clearInterval(timer);
-  }, [ready, user, refresh]);
+  }, [ready, user, refresh, onPollError]);
 
   async function send<R extends MeetingRequest>(
     payload: R,
@@ -222,7 +181,6 @@ export function useMeetingSync({
     if (!initial.current.ready || pending.current) return null;
     pending.current = true;
     generation.current++;
-    requestSeq.current++;
     setBusy(true);
     onSaveStart();
     try {
@@ -246,10 +204,6 @@ export function useMeetingSync({
     } finally {
       pending.current = false;
       setBusy(false);
-      if (refreshWanted.current) {
-        refreshWanted.current = false;
-        requestRefresh();
-      }
     }
   }
 
@@ -257,8 +211,6 @@ export function useMeetingSync({
     ready,
     initialLoad,
     retryInitialLoad,
-    requestRefresh,
-    requestId,
     user,
     nickname,
     rooms,

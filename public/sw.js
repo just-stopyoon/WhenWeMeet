@@ -6,7 +6,6 @@
 const defaultTitle = '언제 만날래';
 const defaultBody = '새 소식이 있어요.';
 const notificationIcon = '/icons/icon-192.png';
-const openRoomMessage = 'wwm-open-room';
 
 // A missing or broken payload still shows a notification: iOS cancels the
 // subscription when a push shows nothing.
@@ -68,14 +67,19 @@ async function openTarget(clients, origin, target) {
     await clients.openWindow(target);
     return;
   }
-  // The open window gets '/' too, and then shows its root screen.
-  let focused = open;
+  // Reuse the open window: bring it forward and move it to the address. A
+  // window this worker does not control yet (first visit, before a reload)
+  // refuses navigate(); that address then opens in a new window.
   try {
-    focused = (await open.focus()) ?? open;
+    await open.focus();
   } catch {
-    // Focus can be refused; the open window still gets the room message.
+    // Focus can be refused; moving the window still goes ahead.
   }
-  focused.postMessage({ type: openRoomMessage, url: target });
+  try {
+    await open.navigate(target);
+  } catch {
+    await clients.openWindow(target);
+  }
 }
 
 function handleNotificationClick(event, clients, origin) {

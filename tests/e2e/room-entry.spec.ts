@@ -159,3 +159,39 @@ test('/?join=과 /?room=이 함께 있으면 참가 화면이 우선이다', asy
     if (member) await action(guest, { type: 'close', roomId: member.id });
   }
 });
+
+// No kept entry: a join code left in the form still leads to the join screen
+// after signing in again, as before T4. The test server allows 50 sign-in or
+// sign-up attempts per IP in 15 minutes (and 10 per account name); this test
+// uses two.
+test('보관한 진입 없이 다시 로그인하면 폼에 남은 참가 코드로 참가 화면을 이어 간다', async ({
+  page,
+  context,
+  baseURL,
+  accounts,
+}) => {
+  const [, guest] = accounts;
+  // A separate session, so logging out keeps the shared fixture session.
+  const login = await context.request.post('/api/meeting', {
+    headers: { Origin: new URL(baseURL!).origin },
+    data: { type: 'login', name: guest.name, pin: guest.pin },
+  });
+  expect(login.status()).toBe(200);
+  await page.goto('/');
+  await page.getByRole('button', { name: '코드로 참가' }).click();
+  await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
+  await page.getByRole('button', { name: '내 모임으로', exact: true }).click();
+  await page.getByRole('button', { name: '설정', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '로그아웃' })
+    .click();
+  await expect(page.getByLabel('아이디', { exact: true })).toBeVisible();
+  await page.getByLabel('아이디', { exact: true }).fill(guest.name);
+  await page.getByLabel('숫자 4자리 비밀번호', { exact: true }).fill(guest.pin);
+  await page.getByRole('button', { name: '로그인', exact: true }).click();
+  await expect(page.locator('header b')).toHaveText('모임 참가');
+  await expect(page.getByLabel('초대 코드', { exact: true })).toHaveValue(
+    'OLDCODE00000',
+  );
+});

@@ -3,7 +3,6 @@ import {
   action,
   createRoom,
   expect,
-  postAction,
   test,
   uniqueTitle,
   type Room,
@@ -19,8 +18,6 @@ type WorkerGlobals = {
   handlePush: PushHandler;
   handleNotificationClick: ClickHandler;
 };
-
-const goneToast = '종료되었거나 더 이상 참여 중인 모임이 아니에요.';
 
 async function registeredWorker(
   page: Page,
@@ -129,7 +126,7 @@ test('앱을 열면 service worker를 등록하고 push 처리기는 페이로�
     expect(results[name], name).toEqual(fallback);
 });
 
-test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새 창, 다른 출처면 /를 연다', async ({
+test('notificationclick 처리기는 열린 창을 앞으로 가져와 여는 주소로 이동하고 거절되거나 창이 없으면 새 창, 다른 출처면 /를 연다', async ({
   page,
   context,
   accounts,
@@ -139,7 +136,11 @@ test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새
   const results = await worker.evaluate(async () => {
     const { handleNotificationClick } = globalThis as unknown as WorkerGlobals;
     const origin = self.location.origin;
-    const run = async (data: unknown, windowUrls: string[]) => {
+    const run = async (
+      data: unknown,
+      windowUrls: string[],
+      navigation: 'ok' | 'refused' = 'ok',
+    ) => {
       const log: string[] = [];
       let waited: Promise<unknown> | undefined;
       const windows = windowUrls.map((url, index) => ({
@@ -148,8 +149,13 @@ test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새
           log.push(`focus ${index}`);
           return this;
         },
-        postMessage(message: unknown) {
-          log.push(`message ${index} ${JSON.stringify(message)}`);
+        async navigate(target: string) {
+          log.push(`navigate ${index} ${target}`);
+          if (navigation === 'refused')
+            throw new TypeError(
+              "This service worker is not the client's active service worker.",
+            );
+          return this;
         },
       }));
       handleNotificationClick(
@@ -183,6 +189,10 @@ test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새
     const room = { url: '/?room=room-1' };
     return {
       reuse: await run(room, ['https://other.example/', origin + '/?join=ABC']),
+      refused: await run(room, [origin + '/'], 'refused'),
+      reuseRoot: await run({ url: 'https://evil.example/?room=room-1' }, [
+        origin + '/?room=room-1',
+      ]),
       fresh: await run(room, []),
       foreignOnly: await run(room, ['https://other.example/']),
       absolute: await run({ url: origin + '/?room=room-2' }, []),
@@ -196,12 +206,21 @@ test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새
   });
   const matchAll = 'matchAll {"type":"window","includeUncontrolled":true}';
   expect(results.reuse).toEqual({
+    log: ['close', matchAll, 'focus 1', 'navigate 1 /?room=room-1'],
+    hadWait: true,
+  });
+  expect(results.refused).toEqual({
     log: [
       'close',
       matchAll,
-      'focus 1',
-      'message 1 {"type":"wwm-open-room","url":"/?room=room-1"}',
+      'focus 0',
+      'navigate 0 /?room=room-1',
+      'open /?room=room-1',
     ],
+    hadWait: true,
+  });
+  expect(results.reuseRoot).toEqual({
+    log: ['close', matchAll, 'focus 0', 'navigate 0 /'],
     hadWait: true,
   });
   expect(results.fresh).toEqual({
@@ -227,51 +246,37 @@ test('notificationclick 처리기는 열린 창을 재사용하고 없으면 새
     });
 });
 
-// The page clock stays paused so the 4-second poll never refreshes the list:
-// only the message handler's own fresh request can explain the result.
-test('오래 열린 창에 알림 클릭 메시지가 오면 목록을 새로 받아 그 모임 또는 홈과 토스트를 보인다', async ({
+// The real registered worker moves a window it controls (after a reload);
+// the page then takes the /?room= entry path. Focus needs a real click's
+// user activation, so it is refused here and moving still goes ahead.
+test('실제 등록된 worker는 제어하는 열린 창을 알림 주소로 이동해 그 모임 또는 홈을 연다', async ({
   page,
   context,
   accounts,
 }) => {
   const [host, guest] = accounts;
-  let joined: Room | undefined;
-  let left: Room | undefined;
+  let room: Room | undefined;
   try {
-    left = await createRoom(host, { title: uniqueTitle('알림 메시지 나감') });
-    await action(guest, { type: 'join', code: left.code });
+    room = await createRoom(host, { title: uniqueTitle('알림 창 이동') });
+    await action(guest, { type: 'join', code: room.code });
     await context.addCookies(guest.storageState.cookies);
-    await page.clock.install({ time: new Date(Date.now() - 1000) });
-    await page.clock.pauseAt(new Date());
     const worker = await registeredWorker(page, context);
+    await page.reload();
+    expect(
+      await page.evaluate(() => !!navigator.serviceWorker.controller),
+    ).toBe(true);
     await expect(
-      page.getByRole('heading', { name: left.title, exact: true }),
+      page.getByRole('heading', { name: room.title, exact: true }),
     ).toBeVisible();
 
-    joined = await createRoom(host, { title: uniqueTitle('알림 메시지 참가') });
-    await action(guest, { type: 'join', code: joined.code });
-    const leave = await postAction(guest, {
-      type: 'remove',
-      roomId: left.id,
-      member: guest.name,
-    });
-    expect(leave.status()).toBe(200);
-    // The stale list still shows the left room and lacks the joined one.
-    await expect(
-      page.getByRole('heading', { name: left.title, exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('heading', { name: joined.title, exact: true }),
-    ).toHaveCount(0);
-
-    const click = (url: string) =>
-      worker.evaluate(async (target) => {
+    const click = (data: unknown) =>
+      worker.evaluate(async (notificationData) => {
         const { handleNotificationClick } =
           globalThis as unknown as WorkerGlobals;
         let waited: Promise<unknown> | undefined;
         handleNotificationClick(
           {
-            notification: { data: { url: target }, close() {} },
+            notification: { data: notificationData, close() {} },
             waitUntil(promise: Promise<unknown>) {
               waited = promise;
             },
@@ -280,21 +285,22 @@ test('오래 열린 창에 알림 클릭 메시지가 오면 목록을 새로 �
           self.location.origin,
         );
         await waited;
-      }, url);
+      }, data);
 
-    await click(`/?room=${joined.id}`);
-    await expect(page.locator('header b')).toHaveText(joined.title);
+    const pages = context.pages().length;
+    await click({ url: `/?room=${room.id}` });
+    await expect(page.locator('header b')).toHaveText(room.title);
     await expect(page).toHaveURL(/\/$/);
 
-    await click(`/?room=${left.id}`);
+    await click({ url: `https://evil.example/?room=${room.id}` });
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       '우리 언제 만날까요?',
     );
-    await expect(page.locator('.toast')).toHaveText(goneToast);
+    await expect(page.locator('.toast')).toHaveCount(0);
     await expect(page).toHaveURL(/\/$/);
+    expect(context.pages()).toHaveLength(pages);
   } finally {
-    if (joined) await action(host, { type: 'close', roomId: joined.id });
-    if (left) await action(host, { type: 'close', roomId: left.id });
+    if (room) await action(host, { type: 'close', roomId: room.id });
   }
 });
 
