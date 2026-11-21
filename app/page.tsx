@@ -79,22 +79,30 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
-  // The latest /?room= entry (S3). after is the last request id when it
-  // arrived: only a signed-in list from a later request may consume it.
-  const roomEntry = useRef<{ room: string; after: number } | null>(null);
+  // The latest entry: the first URL or an open-window notification message
+  // (S3, model in issue #14 T4). Only this decides where a signed-in list
+  // goes; the join form value never does. after is the last request id when
+  // the entry arrived: a room entry needs a list from a later request.
+  const entry = useRef<{
+    kind: 'room' | 'join' | 'root';
+    value: string;
+    after: number;
+  } | null>(null);
   const consumeEntryRef = useRef<
-    (snapshot: MeetingSnapshot, requestId: number) => void
-  >(() => {});
+    (snapshot: MeetingSnapshot, requestId: number) => boolean
+  >(() => false);
   const onInitialLoad = useCallback(
-    (snapshot: MeetingSnapshot, invite: string | null, requestId: number) => {
-      if (invite) setCode(invite.toUpperCase());
-      changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
-      consumeEntryRef.current(snapshot, requestId);
+    (snapshot: MeetingSnapshot, requestId: number) => {
+      if (!snapshot.user) changeView('login');
+      else if (!consumeEntryRef.current(snapshot, requestId))
+        changeView('home');
     },
     [],
   );
   const onRefresh = useCallback(
     (snapshot: MeetingSnapshot, requestId: number) => {
+      // A notification destination decides the screen and toast first.
+      if (consumeEntryRef.current(snapshot, requestId)) return;
       if (view === 'room' && !snapshot.rooms.some((r) => r.id === active)) {
         changeView('home');
         changeSheet(null);
@@ -104,7 +112,6 @@ export default function Home() {
         changeView('login');
         changeSheet(null);
       }
-      consumeEntryRef.current(snapshot, requestId);
     },
     [view, active],
   );
@@ -254,20 +261,32 @@ export default function Home() {
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
   }
-  // Consumes the room entry with a signed-in list read after it arrived.
+  // Consumes the latest entry with a signed-in list; true when it decided
+  // the screen. A room entry needs a list read after the entry arrived.
   function consumeEntry(snapshot: MeetingSnapshot, requestId: number) {
-    const entry = roomEntry.current;
-    if (!entry || !snapshot.user || requestId <= entry.after) return;
-    roomEntry.current = null;
-    window.history.replaceState(null, '', '/');
+    const current = entry.current;
+    if (!current || !snapshot.user) return false;
+    if (current.kind === 'room' && requestId <= current.after) return false;
+    entry.current = null;
     changeSheet(null);
-    const target = snapshot.rooms.find((r) => r.id === entry.room);
+    if (current.kind === 'join') {
+      setCode(current.value.toUpperCase());
+      setView('join');
+      return true;
+    }
+    window.history.replaceState(null, '', '/');
+    const target =
+      current.kind === 'room'
+        ? snapshot.rooms.find((r) => r.id === current.value)
+        : undefined;
     if (target && target.members.includes(snapshot.user) && !expired(target))
       openRoom(target, snapshot.user);
     else {
       setView('home');
-      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+      if (current.kind === 'room')
+        setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
     }
+    return true;
   }
   // A notification click on an open window. Only the same-origin root with
   // ?room= or ?join= is read; anything else goes to the root screen.
@@ -290,20 +309,23 @@ export default function Home() {
     } catch {
       params = null;
     }
-    const ready = initialLoad.status === 'ready';
     const invite = params?.get('join');
     const room = params?.get('room') ?? null;
-    if (invite || room === null) {
-      roomEntry.current = null;
-      changeSheet(null);
-      // An invite wins over a room, as on a fresh window.
-      if (invite) setCode(invite.toUpperCase());
-      else window.history.replaceState(null, '', '/');
-      if (ready) setView(user ? (invite ? 'join' : 'home') : 'login');
+    // An invite wins over a room, as on a fresh window.
+    entry.current = invite
+      ? { kind: 'join', value: invite, after: requestId() }
+      : room !== null
+        ? { kind: 'room', value: room, after: requestId() }
+        : { kind: 'root', value: '', after: requestId() };
+    if (entry.current.kind === 'room') {
+      requestRefresh();
       return;
     }
-    roomEntry.current = { room, after: requestId() };
-    requestRefresh();
+    // Join and root need no list: apply now when signed in. Before the first
+    // load or while signed out they wait for that list or sign-in.
+    if (initialLoad.status !== 'ready') return;
+    changeSheet(null);
+    if (user) consumeEntry({ user, nickname, rooms }, Infinity);
   }
   const openFromWorkerRef = useRef(openFromWorker);
   useEffect(() => {
@@ -313,8 +335,14 @@ export default function Home() {
   useEffect(() => {
     // Recorded before the first list arrives; a later message replaces it.
     const params = new URLSearchParams(window.location.search);
-    if (!params.get('join') && params.has('room'))
-      roomEntry.current = { room: params.get('room') ?? '', after: 0 };
+    const invite = params.get('join');
+    if (invite) entry.current = { kind: 'join', value: invite, after: 0 };
+    else if (params.has('room'))
+      entry.current = {
+        kind: 'room',
+        value: params.get('room') ?? '',
+        after: 0,
+      };
     if (!('serviceWorker' in navigator)) return;
     const container = navigator.serviceWorker;
     // Registration never asks for notification permission.
@@ -335,9 +363,8 @@ export default function Home() {
     if (!data) return;
     replaceSession(data);
     setPin('');
-    setView(code ? 'join' : 'home');
-    // A pending room entry wins over a leftover join form value.
-    consumeEntry(data, before + 1);
+    // The join form value is input only; the latest entry decides.
+    if (!consumeEntry(data, before + 1)) setView('home');
   }
   async function create() {
     const data = await send({
@@ -513,7 +540,7 @@ export default function Home() {
   }
   async function logout() {
     if (!(await send({ type: 'logout' }))) return;
-    roomEntry.current = null;
+    entry.current = null;
     clearSession();
     setView('login');
     setSheet(null);

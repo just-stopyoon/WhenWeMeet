@@ -9,9 +9,10 @@ import {
   type Room,
 } from '../support/fixtures';
 
-// Headless Chromium cannot synthesize real push or notification click events,
-// so these tests call the worker's named handlers with stand-in events,
-// clients and registration objects (issue #14 T4, decision R7 ②).
+// Most tests call the worker's named handlers directly with stand-in events,
+// clients and registration objects (issue #14 T4, decision R7 ②). One push
+// also goes through the registered listener via CDP (last test); notification
+// clicks are not synthesized.
 type PushHandler = (event: unknown, registration: unknown) => void;
 type ClickHandler = (event: unknown, clients: unknown, origin: string) => void;
 type WorkerGlobals = {
