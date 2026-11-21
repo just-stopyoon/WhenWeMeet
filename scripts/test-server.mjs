@@ -184,8 +184,6 @@ async function execute() {
     pushSendBlocked,
   ];
   const child = launch(process.execPath, devArgs, true);
-  if (devArgs.includes(pushSendBlocked))
-    record('WEB_PUSH_SEND_BLOCKED_AT_START');
   const exited = activeClosed.then((result) => {
     throw new Error(
       `Test Wrangler exited (${result.code ?? result.signal}). See test-artifacts/server.log.`,
@@ -207,6 +205,17 @@ async function execute() {
     });
   });
   await Promise.race([ready, exited, aborted()]);
+  // Checked independently of the constant above, on the final arguments: the
+  // start line appears only when `--var` really carries the name and value
+  // that lib/web-push.ts `isPushSendBlocked` treats as blocked.
+  if (
+    devArgs.some(
+      (arg, index) =>
+        devArgs[index - 1] === '--var' &&
+        arg === 'WHENWEMEET_PUSH_SEND_BLOCKED:1',
+    )
+  )
+    record('WEB_PUSH_SEND_BLOCKED_AT_START');
   // Initialises the schema in this run's private D1 and verifies the actual API.
   let healthy = false;
   for (let attempt = 0; attempt < 100; attempt++) {

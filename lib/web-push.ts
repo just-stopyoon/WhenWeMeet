@@ -10,7 +10,7 @@ import {
   pushHostKind,
   type PushSubscriptionRecord,
 } from './push-subscription';
-import type { StoredVapidKey } from './vapid-keys';
+import { importVapidKey, type StoredVapidKey } from './vapid-keys';
 
 export const vapidSubject =
   'https://github.com/just-stopyoon/WhenWeMeet/issues';
@@ -83,7 +83,8 @@ export async function encryptPayload(
   const authSecret = base64UrlDecode(subscription.auth);
   if (receiver?.length !== 65 || authSecret?.length !== 16)
     throw new Error('Invalid subscription keys.');
-  if (plaintext.length + 1 + 16 > recordSize)
+  // RFC 8291 section 4: rs must exceed plaintext + delimiter + 16-byte tag.
+  if (plaintext.length + 1 + 16 >= recordSize)
     throw new Error('Push payload is too large.');
   const salt = overrides.salt ?? crypto.getRandomValues(new Uint8Array(16));
   const sender = overrides.senderKey ?? (await newSenderKey());
@@ -127,19 +128,6 @@ export async function encryptPayload(
   new DataView(header.buffer).setUint32(16, recordSize);
   header[20] = sender.publicKey.length;
   return concat(header, sender.publicKey, ciphertext);
-}
-
-export async function importVapidSigningKey(
-  vapid: StoredVapidKey,
-): Promise<CryptoKey> {
-  const jwk = JSON.parse(vapid.privateJwk) as JsonWebKey;
-  return crypto.subtle.importKey(
-    'jwk',
-    { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d },
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['sign'],
-  );
 }
 
 // RFC 8292 section 2: ES256 JWT whose audience is the push service origin.
@@ -210,7 +198,8 @@ function describe(outcome: PushOutcome): string {
 async function deliver(
   subscription: PushSubscriptionRecord,
   options: SendPushOptions,
-  signingKey: CryptoKey | null,
+  signingKey: Promise<CryptoKey | null>,
+  deadline: AbortSignal,
   log: (line: string) => void,
 ): Promise<PushOutcome> {
   // Check again right before sending (Q14): stored rows may predate a rule.
@@ -220,7 +209,8 @@ async function deliver(
   });
   const host = checked && pushHostKind(checked.endpoint);
   if (!checked || !host) return { kind: 'invalid-subscription' };
-  if (!signingKey) return { kind: 'key-failure' };
+  const key = await signingKey;
+  if (!key) return { kind: 'key-failure' };
   let body: Uint8Array<ArrayBuffer>;
   let authorization: string;
   try {
@@ -232,19 +222,20 @@ async function deliver(
     authorization = await vapidAuthorization(
       checked.endpoint,
       options.vapid,
-      signingKey,
+      key,
       (options.now ?? Date.now)(),
     );
   } catch {
     return { kind: 'key-failure' };
   }
+  // The 10-second limit covers the whole subscription, not only the request:
+  // a deadline that passed while checking, signing or encrypting sends nothing.
+  if (deadline.aborted) return { kind: 'transport-failure' };
   if (options.blocked) {
     log(`WEB_PUSH_BLOCKED_ATTEMPT host=${host}`);
     return { kind: 'blocked' };
   }
   log(`WEB_PUSH_NETWORK_ATTEMPT host=${host}`);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), pushTimeoutMs);
   try {
     const response = await options.fetch(checked.endpoint, {
       method: 'POST',
@@ -257,14 +248,12 @@ async function deliver(
       },
       body,
       redirect: 'manual',
-      signal: controller.signal,
+      signal: deadline,
     });
     void response.body?.cancel().catch(() => undefined);
     return classifyStatus(response.status);
   } catch {
     return { kind: 'transport-failure' };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -274,19 +263,29 @@ export async function sendPush(
   options: SendPushOptions,
 ): Promise<PushDelivery[]> {
   const log = options.log ?? console.log;
-  let signingKey: CryptoKey | null = null;
-  try {
-    signingKey = await importVapidSigningKey(options.vapid);
-  } catch {
-    signingKey = null;
-  }
+  // Each subscription's 10-second limit starts now, before any await.
+  const deadlines = options.subscriptions.map(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), pushTimeoutMs);
+    return { signal: controller.signal, clear: () => clearTimeout(timer) };
+  });
+  const signingKey = importVapidKey(options.vapid).catch(() => null);
   return Promise.all(
-    options.subscriptions.map(async (subscription) => {
+    options.subscriptions.map(async (subscription, index) => {
+      const deadline = deadlines[index];
       let outcome: PushOutcome;
       try {
-        outcome = await deliver(subscription, options, signingKey, log);
+        outcome = await deliver(
+          subscription,
+          options,
+          signingKey,
+          deadline.signal,
+          log,
+        );
       } catch {
         outcome = { kind: 'transport-failure' };
+      } finally {
+        deadline.clear();
       }
       try {
         log(describe(outcome));

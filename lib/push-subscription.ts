@@ -76,6 +76,16 @@ export async function importReceiverKey(
   );
 }
 
+// One spelling per push address: only the serialised URL that `fetch` sends
+// to is accepted, so registration, removal and delivery key on one string.
+// T2 uses this for both `pushSubscribe` and `pushUnsubscribe`.
+export function checkPushEndpoint(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > maxEndpointLength)
+    return null;
+  if (pushHostKind(value) === null) return null;
+  return new URL(value).href === value ? value : null;
+}
+
 // Returns the normalised record, or null when any field fails the check.
 export async function checkPushSubscription(
   value: unknown,
@@ -83,9 +93,8 @@ export async function checkPushSubscription(
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     return null;
   const { endpoint, keys } = value as { endpoint?: unknown; keys?: unknown };
-  if (typeof endpoint !== 'string' || endpoint.length > maxEndpointLength)
+  if (typeof endpoint !== 'string' || checkPushEndpoint(endpoint) === null)
     return null;
-  if (pushHostKind(endpoint) === null) return null;
   if (typeof keys !== 'object' || keys === null || Array.isArray(keys))
     return null;
   const { p256dh, auth } = keys as { p256dh?: unknown; auth?: unknown };

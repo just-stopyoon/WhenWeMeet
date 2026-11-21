@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   base64UrlDecode,
   base64UrlEncode,
+  checkPushEndpoint,
   checkPushSubscription,
   maxEndpointLength,
   pushHostKind,
@@ -402,6 +403,34 @@ void test('10초 안에 응답이 없으면 끊고 전송 실패로 분류한다
   assert.deepEqual(results[0].outcome, { kind: 'transport-failure' });
 });
 
+void test('서명·암호화를 기다리는 사이 10초가 지나면 보내지 않는다', async (t) => {
+  const key = await vapid();
+  let begin!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => (begin = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const sign = crypto.subtle.sign.bind(crypto.subtle);
+  t.mock.method(
+    crypto.subtle,
+    'sign',
+    async (...args: Parameters<SubtleCrypto['sign']>) => {
+      begin();
+      await gate;
+      return sign(...args);
+    },
+  );
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
+  const pending = send({ fetch, vapid: key });
+  await started;
+  t.mock.timers.tick(10_000);
+  release();
+  const { results, lines } = await pending;
+  assert.equal(calls.length, 0);
+  assert.deepEqual(results[0].outcome, { kind: 'transport-failure' });
+  assert.deepEqual(lines, ['WEB_PUSH_RESULT transport-failure']);
+});
+
 void test('한 구독의 실패·예외가 다른 구독의 발송을 막지 않는다', async () => {
   const failing = 'https://fcm.googleapis.com/fcm/send/fail';
   const working = 'https://web.push.apple.com/ok';
@@ -459,6 +488,31 @@ void test('VAPID 키를 가져오지 못하거나 암호화가 실패하면 키 
   assert.deepEqual(broken.results[0].outcome, { kind: 'key-failure' });
   assert.deepEqual(tooLarge.results[0].outcome, { kind: 'key-failure' });
   assert.deepEqual(broken.lines, ['WEB_PUSH_RESULT key-failure']);
+});
+
+void test('평문은 레코드 하나(rs 4096)에 들어가는 4078바이트까지 받는다', async () => {
+  const subscriber = { p256dh: rfc.uaPublic, auth: rfc.auth };
+  const largest = 'x'.repeat(4078);
+  const body = await encryptPayload(encoder.encode(largest), subscriber);
+  const decrypted = await decrypt(body);
+  assert.equal(decrypted.text, largest);
+  assert.equal(body.length - 86, 4095);
+  await assert.rejects(
+    encryptPayload(encoder.encode('x'.repeat(4079)), subscriber),
+  );
+  const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
+  assert.deepEqual(
+    (await send({ fetch, payload: largest })).results[0].outcome,
+    {
+      kind: 'sent',
+      status: 201,
+    },
+  );
+  assert.deepEqual(
+    (await send({ fetch, payload: 'x'.repeat(4079) })).results[0].outcome,
+    { kind: 'key-failure' },
+  );
+  assert.equal(calls.length, 1);
 });
 
 void test('기록에는 분류 이름·상태 코드·호스트 종류만 남는다', async () => {
@@ -524,13 +578,11 @@ void test('발송 차단 중이면 서명·암호화 뒤 네트워크로 나가�
     results.map((result) => result.outcome.kind),
     ['blocked', 'invalid-subscription', 'blocked'],
   );
-  assert.deepEqual(
-    lines.filter((line) => line.includes('ATTEMPT')),
-    [
-      'WEB_PUSH_BLOCKED_ATTEMPT host=apple',
-      'WEB_PUSH_BLOCKED_ATTEMPT host=fcm',
-    ],
-  );
+  // Deliveries run in parallel, so log lines follow completion order.
+  assert.deepEqual(lines.filter((line) => line.includes('ATTEMPT')).sort(), [
+    'WEB_PUSH_BLOCKED_ATTEMPT host=apple',
+    'WEB_PUSH_BLOCKED_ATTEMPT host=fcm',
+  ]);
 
   const broken = await send({
     fetch,
@@ -538,6 +590,26 @@ void test('발송 차단 중이면 서명·암호화 뒤 네트워크로 나가�
     vapid: { publicKey: (await vapid()).publicKey, privateJwk: 'not json' },
   });
   assert.deepEqual(broken.lines, ['WEB_PUSH_RESULT key-failure']);
+
+  // A valid key whose encryption or signing step fails must not reach the
+  // blocked branch: blocking happens only after both succeed.
+  const encryptionFails = await send({
+    fetch,
+    blocked: true,
+    payload: 'x'.repeat(4079),
+  });
+  const signingFails = await send({
+    fetch,
+    blocked: true,
+    now: () => {
+      throw new Error('clock failure');
+    },
+  });
+  for (const failed of [encryptionFails, signingFails]) {
+    assert.deepEqual(failed.results[0].outcome, { kind: 'key-failure' });
+    assert.deepEqual(failed.lines, ['WEB_PUSH_RESULT key-failure']);
+  }
+  assert.equal(calls.length, 0);
 });
 
 void test('발송 차단 설정은 테스트 서버 변수 값 "1"일 때만 켜진다', () => {
@@ -649,6 +721,79 @@ void test('저장소 읽기·생성이 실패하면 응답은 키만 빠지고 �
   }
 });
 
+async function corruptKeys(): Promise<Record<string, StoredVapidKey>> {
+  const good = await generateVapidKey();
+  const other = await generateVapidKey();
+  const jwk = JSON.parse(good.privateJwk) as JsonWebKey;
+  const otherJwk = JSON.parse(other.privateJwk) as JsonWebKey;
+  return {
+    '다른 키의 공개 키': { ...good, publicKey: other.publicKey },
+    '공개 키 길이 틀림': { ...good, publicKey: good.publicKey.slice(0, -4) },
+    '공개 키 base64url 아님': { ...good, publicKey: `${good.publicKey}=` },
+    '다른 키의 d': {
+      ...good,
+      privateJwk: JSON.stringify({ ...jwk, d: otherJwk.d }),
+    },
+    'd 없음': {
+      ...good,
+      privateJwk: JSON.stringify({ ...jwk, d: undefined }),
+    },
+    'JSON 아님': { ...good, privateJwk: '{' },
+    'JSON 배열': { ...good, privateJwk: '[]' },
+    '공개 키 숫자': { ...good, publicKey: 7 as unknown as string },
+  };
+}
+
+void test('저장된 키 행이 손상되면 바꾸지 않고 응답에서 키만 뺀다', async () => {
+  for (const [name, corrupt] of Object.entries(await corruptKeys())) {
+    let inserts = 0;
+    const store: VapidKeyStore = {
+      read: () => Promise.resolve({ ...corrupt }),
+      insertIfAbsent: () => {
+        inserts++;
+        return Promise.resolve();
+      },
+    };
+    const lines: string[] = [];
+    const body = { user: 'a', rooms: [] };
+    assert.deepEqual(
+      await withPushPublicKey(body, store, (line) => lines.push(line)),
+      { user: 'a', rooms: [] },
+      name,
+    );
+    assert.deepEqual(lines, ['WEB_PUSH_KEY_UNAVAILABLE'], name);
+    await assert.rejects(loadVapidKey(store), VapidKeyError, name);
+    assert.equal(inserts, 0, name);
+  }
+
+  // A row inserted by another request and re-read is checked the same way.
+  const [corrupt] = Object.values(await corruptKeys());
+  let row: StoredVapidKey | null = null;
+  const racing: VapidKeyStore = {
+    read: () => Promise.resolve(row),
+    insertIfAbsent: () => {
+      row = corrupt;
+      return Promise.resolve();
+    },
+  };
+  await assert.rejects(loadVapidKey(racing), VapidKeyError);
+  assert.equal(row, corrupt);
+});
+
+void test('손상된 키로는 보내지 않고 키 실패로 분류한다', async () => {
+  for (const [name, corrupt] of Object.entries(await corruptKeys())) {
+    for (const blocked of [false, true]) {
+      const { fetch, calls } = fakeFetch(
+        () => new Response(null, { status: 201 }),
+      );
+      const { results, lines } = await send({ fetch, blocked, vapid: corrupt });
+      assert.equal(calls.length, 0, name);
+      assert.deepEqual(results[0].outcome, { kind: 'key-failure' }, name);
+      assert.deepEqual(lines, ['WEB_PUSH_RESULT key-failure'], name);
+    }
+  }
+});
+
 // --- subscription check -----------------------------------------------------
 
 const allowed = [
@@ -670,6 +815,37 @@ for (const [endpoint, kind] of allowed) {
     );
   });
 }
+
+void test('같은 주소의 다른 표기는 거절해 등록·해지·발송이 같은 문자열을 쓴다', async () => {
+  const canonical = 'https://fcm.googleapis.com/fcm/send/abc';
+  const keys = { p256dh: rfc.uaPublic, auth: rfc.auth };
+  assert.equal(checkPushEndpoint(canonical), canonical);
+  assert.deepEqual(await checkPushSubscription({ endpoint: canonical, keys }), {
+    endpoint: canonical,
+    ...keys,
+  });
+  for (const variant of [
+    'https://FCM.googleapis.com/fcm/send/abc',
+    'HTTPS://fcm.googleapis.com/fcm/send/abc',
+    'https://fcm.googleapis.com:443/fcm/send/abc',
+    'https://fcm.googleapis.com/fcm/x/../send/abc',
+    ' https://fcm.googleapis.com/fcm/send/abc',
+    'https://fcm.googleapis.com/fcm/send/abc ',
+    'https://fcm.googleapis.com',
+    'https:fcm.googleapis.com/fcm/send/abc',
+    'https://web.push.apple.com/a b',
+  ]) {
+    assert.equal(new URL(variant).hostname.length > 0, true, variant);
+    assert.equal(checkPushEndpoint(variant), null, variant);
+    assert.equal(
+      await checkPushSubscription({ endpoint: variant, keys }),
+      null,
+      variant,
+    );
+  }
+  for (const value of [null, 0, [], {}, undefined, ''])
+    assert.equal(checkPushEndpoint(value), null);
+});
 
 void test('endpoint는 2048자까지 받는다', async () => {
   const base = 'https://fcm.googleapis.com/fcm/send/';
