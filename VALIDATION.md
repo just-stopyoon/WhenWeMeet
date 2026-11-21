@@ -33,6 +33,19 @@
 
 이슈의 변형 5개는 `c208fb8`에서도 같은 결과(모두 exit 1, 되돌린 뒤 exit 0)였습니다. 검수 반영 전 검사는 정규식으로 HTML을 읽어 주석 처리된 링크를 통과시키고, 같은 크기의 다른 아이콘 파일과 다른 선언 type도 통과시켰습니다. 반영 뒤 검사는 받은 HTML을 Chromium의 `DOMParser`로 해석하고, 아이콘 용도·크기별 고정 URL과 선언 type, apple-touch-icon 고정 URL을 대조합니다.
 
+### 화면 확인
+
+감독이 같은 Playwright 촬영 스크립트(커밋하지 않음)로 변경 전은 시작 커밋 `0820b95`의 임시 워크트리, 변경 후는 `6e7b438`(이후 커밋은 문서만)에서 찍었습니다.
+
+- 조건: Chromium 153.0.8010.12·WebKit 26.6(Playwright webkit 2359), 폭 360·430 × 높이 900, isMobile·hasTouch. 이미지 로딩 완료를 기다린 뒤 찍었고, 전·후 각 4개 실행이 모두 통과했습니다.
+- 상태: 로그인 화면(새 세션 `/`), 홈(API로 만든 테스트 계정 쿠키, 하단 "새 모임 만들기"), 바텀시트(홈 헤더 "설정"의 "내 계정" 시트).
+- 측정(두 엔진·두 폭 모두 전·후 같음): 하단 고정 버튼 `padding-bottom` 22px, 바텀시트 `padding-bottom` 27px, 세 상태 모두 가로 넘침(`scrollWidth − innerWidth`) 0, 시트 아래 끝 간격 0. viewport 메타는 전 `width=device-width, initial-scale=1`, 후 `width=device-width, initial-scale=1, viewport-fit=cover`입니다.
+- 픽셀 비교: 로그인 화면은 chromium-360·webkit-360·webkit-430에서 차이 0입니다. chromium-430만 상단 브랜드 로고 영역(33×34px)에서 채널 최대 13 차이가 있습니다. 같은 `app-logo.png`의 축소 렌더 차이이며 눈으로 보면 같습니다. 홈·시트의 차이는 실행마다 바뀌는 테스트 계정 이름 글자 영역뿐입니다.
+- 첫 촬영에서 WebKit 360 로그인 화면이 로고 이미지 로딩 전에 찍혀, 이미지 로딩 대기를 더한 같은 스크립트로 전·후를 다시 찍었습니다.
+- 이미지(커밋하지 않음): 폭별 전·후 비교 `.utmp/screens/compare-360.png`, `.utmp/screens/compare-430.png`(PR에는 이 두 장만 첨부). 상태별 `.utmp/screens/before/`, `.utmp/screens/after/`(`<엔진>-<폭>-{1-login,2-home,3-sheet}.png`, 측정 `<엔진>-<폭>-metrics.json`). 아이콘 미리보기 `.utmp/ticket-11/icon-preview/icon-preview.png`.
+- 아이콘 미리보기는 이 기록 시점에 사용자 승인 전입니다.
+- standalone의 실제 여백은 Playwright가 safe area·standalone을 재현하지 못해 사람 확인 4·5번으로 넘깁니다.
+
 ### 아이콘
 
 - `public/icons/`의 PNG 네 개는 `public/app-logo.png`(1254×1254)의 흰 여백을 잘라 낸 1143px 정사각형에서 만들었습니다. 바깥 모서리는 로고 가장자리 안쪽 파란색의 평균 `#318afd`(49,138,253)로 채웠습니다. 생성 스크립트는 커밋하지 않았습니다.
