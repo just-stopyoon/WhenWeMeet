@@ -80,9 +80,10 @@ export default function Home() {
     context: string;
   } | null>(null);
   // The latest entry: the first URL or an open-window notification message
-  // (S3, model in issue #14 T4). Only this decides where a signed-in list
-  // goes; the join form value never does. after is the last request id when
-  // the entry arrived: a room entry needs a list from a later request.
+  // (S3, model in issue #14 T4). When one is kept it decides where a
+  // signed-in list goes; the join form value only matters without one.
+  // after is the last request id when the entry arrived: a room entry needs
+  // a list from a later request.
   const entry = useRef<{
     kind: 'room' | 'join' | 'root';
     value: string;
@@ -363,8 +364,9 @@ export default function Home() {
     if (!data) return;
     replaceSession(data);
     setPin('');
-    // The join form value is input only; the latest entry decides.
-    if (!consumeEntry(data, before + 1)) setView('home');
+    // A kept entry decides; without one the existing rule stands, so a code
+    // typed before the session ended still leads to the join screen.
+    if (!consumeEntry(data, before + 1)) setView(code ? 'join' : 'home');
   }
   async function create() {
     const data = await send({

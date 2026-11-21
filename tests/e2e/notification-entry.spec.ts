@@ -792,3 +792,24 @@ test('새 알림 조회로 모임을 연 뒤 이전 알림 조회가 실패해�
     if (second) await action(host, { type: 'close', roomId: second.id });
   }
 });
+
+// No entry: the existing rule stands, so a code typed before the session
+// ended still leads to the join screen after signing in again.
+test('보관한 진입이 없으면 로그인 뒤 폼에 남은 참가 코드로 참가 화면을 이어 간다', async ({
+  page,
+  context,
+  accounts,
+}) => {
+  const [, guest] = accounts;
+  await signedInHome(page, context, guest, 'separate');
+  await page.getByRole('button', { name: '코드로 참가' }).click();
+  await page.getByLabel('초대 코드', { exact: true }).fill('OLDCODE00000');
+  await page.getByRole('button', { name: '내 모임으로', exact: true }).click();
+  await logout(page);
+  await expectLogin(page);
+  await signIn(page, guest);
+  await expect(page.locator('header b')).toHaveText('모임 참가');
+  await expect(page.getByLabel('초대 코드', { exact: true })).toHaveValue(
+    'OLDCODE00000',
+  );
+});
