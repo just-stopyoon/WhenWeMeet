@@ -60,6 +60,8 @@ export function useMeetingSync({
   const [pushPublicKey, setPushPublicKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  // Resolved when the running save ends (sendAfterSave waits on them).
+  const saveWaiters = useRef<(() => void)[]>([]);
   const generation = useRef(0);
   const initial = useRef<InitialLifecycle>({
     mounted: false,
@@ -213,7 +215,19 @@ export function useMeetingSync({
     } finally {
       pending.current = false;
       setBusy(false);
+      for (const resume of saveWaiters.current.splice(0)) resume();
     }
+  }
+
+  // Like send, but a save already running is waited for instead of refused:
+  // the request is sent exactly once, right after it (no other save starts
+  // in between, since the wait resumes before any new input is handled).
+  async function sendAfterSave<R extends MeetingRequest>(
+    payload: R,
+  ): Promise<MeetingResponse<R> | null> {
+    while (pending.current)
+      await new Promise<void>((resume) => saveWaiters.current.push(resume));
+    return send(payload);
   }
 
   return {
@@ -226,6 +240,7 @@ export function useMeetingSync({
     pushPublicKey,
     busy,
     send,
+    sendAfterSave,
     replaceSession,
     clearSession,
   };

@@ -264,3 +264,82 @@ test('/?room= 대상 모임이 방 화면에서 읽는 필드가 없으면 열�
   await expect(page).toHaveURL(/\/$/);
   expect(errors).toEqual([]);
 });
+
+// Stage-specific fields and nested types the room screen reads (issue #14
+// final review, Spec 4). Each broken target goes home with the toast; the
+// complete final room still opens. Mocked list: the server never sends these.
+const finalRoom = {
+  id: 'entry-final',
+  code: 'FINAL0000000',
+  title: '단계별 필드 모임',
+  stage: 'final',
+  host: 'entry-user',
+  members: ['entry-user', 'friend'],
+  responses: {},
+  start: '2099-01-01',
+  end: '2099-01-20',
+  size: 2,
+  mode: 'all',
+  regions: ['연남'],
+  votes: { 'entry-user': ['연남'] },
+  round: 1,
+  attendees: ['entry-user', 'friend'],
+  date: '2099-01-05|저녁',
+  region: '연남',
+  links: [
+    {
+      id: 'l1',
+      url: 'https://example.com/a',
+      name: '가게',
+      category: 'food',
+      author: 'entry-user',
+    },
+  ],
+  emails: {},
+};
+const { links: _links, ...finalWithoutLinks } = finalRoom;
+const { date: _date, ...finalWithoutDate } = finalRoom;
+for (const [name, room] of [
+  ['확정 단계에 links가 없음', finalWithoutLinks],
+  ['확정 단계에 date가 없음', finalWithoutDate],
+  [
+    '지역 투표 단계의 votes 값이 숫자',
+    { ...finalRoom, stage: 'region', region: undefined, votes: { friend: 3 } },
+  ],
+] as const) {
+  test(`/?room= 대상 모임이 단계별 필수값을 갖추지 못하면(${name}) 열지 않고 홈과 기존 토스트를 보인다`, async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.route('**/api/meeting', (route) =>
+      route.fulfill({
+        json: { user: 'entry-user', nickname: '진입', rooms: [room] },
+      }),
+    );
+    await page.goto(`/?room=${finalRoom.id}`);
+    await expect(page.locator('.toast')).toHaveText(goneToast);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(
+      '우리 언제 만날까요?',
+    );
+    await expect(page).toHaveURL(/\/$/);
+    expect(errors).toEqual([]);
+  });
+}
+
+test('/?room= 대상 모임이 단계별 필수값을 갖추면 확정 단계도 연다', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.route('**/api/meeting', (route) =>
+    route.fulfill({
+      json: { user: 'entry-user', nickname: '진입', rooms: [finalRoom] },
+    }),
+  );
+  await page.goto(`/?room=${finalRoom.id}`);
+  await expect(page.locator('header b')).toHaveText(finalRoom.title);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.toast')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

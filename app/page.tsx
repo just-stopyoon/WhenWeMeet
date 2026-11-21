@@ -59,28 +59,60 @@ function dismissPushPrompt() {
   }
 }
 
-// The fields the room screen reads when a /?room= entry opens a room. A room
-// the home list can show may still lack them (issue #14 T4 final review).
+// The fields the room screen reads when a /?room= entry opens a room, with
+// nested types and the fields each stage needs (issue #14 T4 final review,
+// final review Spec 4). A room the home list can show may still lack them.
+// Only the entry target is checked; the full list keeps its existing checks.
+const datedStages = ['confirm', 'region', 'tie', 'final'];
 function isOpenableRoom(room: Room) {
   const r = room as Partial<Record<keyof Room, unknown>>;
   const strings = (value: unknown) =>
     Array.isArray(value) && value.every((item) => typeof item === 'string');
-  const record = (value: unknown) =>
+  const record = (value: unknown): value is Record<string, unknown> =>
     !!value && typeof value === 'object' && !Array.isArray(value);
+  const recordOf = (value: unknown, item: (entry: unknown) => boolean) =>
+    record(value) && Object.values(value).every(item);
+  const slot = (value: unknown) =>
+    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}\|(점심|저녁)$/.test(value);
+  const link = (value: unknown) =>
+    record(value) &&
+    typeof value.id === 'string' &&
+    typeof value.url === 'string' &&
+    typeof value.name === 'string' &&
+    (value.category === 'food' || value.category === 'cafe');
+  const stage = r.stage;
+  if (
+    typeof stage !== 'string' ||
+    !['schedule', 'date', ...datedStages, 'closed'].includes(stage)
+  )
+    return false;
   return (
     typeof r.id === 'string' &&
+    typeof r.code === 'string' &&
     typeof r.title === 'string' &&
     typeof r.host === 'string' &&
-    typeof r.stage === 'string' &&
     typeof r.start === 'string' &&
     typeof r.end === 'string' &&
+    typeof r.size === 'number' &&
     typeof r.round === 'number' &&
-    (r.date === undefined || typeof r.date === 'string') &&
+    (r.regionRevision === undefined || typeof r.regionRevision === 'number') &&
     strings(r.members) &&
     strings(r.attendees) &&
     strings(r.regions) &&
-    record(r.responses) &&
-    record(r.votes)
+    recordOf(r.responses, strings) &&
+    recordOf(r.votes, strings) &&
+    (r.memberNames === undefined ||
+      recordOf(r.memberNames, (name) => typeof name === 'string')) &&
+    (r.confirmations === undefined ||
+      recordOf(r.confirmations, (value) => typeof value === 'boolean')) &&
+    (r.tied === undefined || strings(r.tied)) &&
+    (datedStages.includes(stage)
+      ? slot(r.date)
+      : r.date === undefined || typeof r.date === 'string') &&
+    (stage !== 'final' ||
+      (typeof r.region === 'string' &&
+        Array.isArray(r.links) &&
+        r.links.every(link)))
   );
 }
 
@@ -176,6 +208,7 @@ export default function Home() {
     pushPublicKey,
     busy,
     send,
+    sendAfterSave,
     replaceSession,
     clearSession,
   } = useMeetingSync({
@@ -555,9 +588,11 @@ export default function Home() {
     if (loggingOut.current) return;
     loggingOut.current = true;
     try {
-      // R2: whatever the state, try to drop this device's subscription first.
-      await push.releaseDevice();
-      const done = await send({ type: 'logout' });
+      // R2 and user decision A: start dropping this device's subscription
+      // (not waited for), then send logout right away. A save already
+      // running finishes first; logout is still sent exactly once.
+      push.releaseDevice();
+      const done = await sendAfterSave({ type: 'logout' });
       push.logoutDone();
       if (!done) return;
     } finally {

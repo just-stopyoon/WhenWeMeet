@@ -451,6 +451,47 @@ void test('서명·암호화를 기다리는 사이 10초가 지나면 보내지
   assert.deepEqual(lines, ['WEB_PUSH_RESULT transport-failure']);
 });
 
+void test('보내기 직전 확인이 끝나지 않아도 10초가 지나면 그 구독은 전송 실패로 끝나고, 늦게 끝난 확인 뒤에도 보내지 않는다', async (t) => {
+  const key = await vapid();
+  let begin!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => (begin = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
+  const pending = send({
+    fetch,
+    vapid: key,
+    confirm: async () => {
+      begin();
+      await gate;
+      return true;
+    },
+  });
+  await Promise.race([
+    started,
+    pending.then(() => assert.fail('the last check was never awaited')),
+  ]);
+  t.mock.timers.tick(10_000);
+  // Without a real timer: give the deadline a few turns to settle the result.
+  const settled = await Promise.race([
+    pending.then(() => true),
+    new Promise<boolean>((resolve) => {
+      let turns = 0;
+      const step = () => (turns++ > 200 ? resolve(false) : setImmediate(step));
+      step();
+    }),
+  ]);
+  assert.equal(settled, true, 'the 10-second limit did not end the send');
+  const { results, lines } = await pending;
+  assert.deepEqual(results[0].outcome, { kind: 'transport-failure' });
+  assert.deepEqual(lines, ['WEB_PUSH_RESULT transport-failure']);
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 0);
+});
+
 void test('한 구독의 실패·예외가 다른 구독의 발송을 막지 않는다', async () => {
   const failing = 'https://fcm.googleapis.com/fcm/send/fail';
   const working = 'https://web.push.apple.com/ok';

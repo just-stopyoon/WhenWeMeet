@@ -289,15 +289,27 @@ export async function sendPush(
     options.subscriptions.map(async (subscription, index) => {
       const deadline = deadlines[index];
       let outcome: PushOutcome;
+      // The limit also ends the wait for this subscription's result: a check,
+      // signing or encryption that never finishes cannot hold the others'
+      // cleanup. A step that finishes late still sends nothing (deliver
+      // checks the deadline right before the network).
+      const expired = new Promise<PushOutcome>((resolve) => {
+        const end = () => resolve({ kind: 'transport-failure' });
+        if (deadline.signal.aborted) end();
+        else deadline.signal.addEventListener('abort', end, { once: true });
+      });
       try {
-        outcome = await deliver(
-          subscription,
-          index,
-          options,
-          signingKey,
-          deadline.signal,
-          log,
-        );
+        outcome = await Promise.race([
+          deliver(
+            subscription,
+            index,
+            options,
+            signingKey,
+            deadline.signal,
+            log,
+          ).catch((): PushOutcome => ({ kind: 'transport-failure' })),
+          expired,
+        ]);
       } catch {
         outcome = { kind: 'transport-failure' };
       } finally {

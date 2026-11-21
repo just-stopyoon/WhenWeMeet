@@ -37,6 +37,8 @@ type MockOptions = {
   existing?: boolean;
   // The existing subscription does not say which server key it used.
   unknownKey?: boolean;
+  // The page's first subscription lookup waits for releaseLookup().
+  holdFirstLookup?: boolean;
 };
 type PushControl = {
   log: string[];
@@ -46,6 +48,7 @@ type PushControl = {
   releaseSubscribe: (() => void) | null;
   holdNextLookup: boolean;
   releaseLookup: (() => void) | null;
+  failNextLookup: boolean;
   holdUnsubscribe: boolean;
   releaseUnsubscribe: (() => void) | null;
   releaseReady: (() => void) | null;
@@ -74,8 +77,9 @@ function installPushMock(options: MockOptions) {
     lookups: 0,
     holdSubscribe: false,
     releaseSubscribe: null as (() => void) | null,
-    holdNextLookup: false,
+    holdNextLookup: !!options.holdFirstLookup,
     releaseLookup: null as (() => void) | null,
+    failNextLookup: false,
     holdUnsubscribe: false,
     releaseUnsubscribe: null as (() => void) | null,
     heldUnsubscribes: [] as (() => void)[],
@@ -140,10 +144,13 @@ function installPushMock(options: MockOptions) {
     );
   const pushManager = {
     getSubscription: () =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         const settle = () => {
           control.lookups++;
-          resolve(control.subscription);
+          if (control.failNextLookup) {
+            control.failNextLookup = false;
+            reject(new DOMException('lookup failed', 'AbortError'));
+          } else resolve(control.subscription);
         };
         if (control.holdNextLookup) {
           control.holdNextLookup = false;
@@ -259,7 +266,7 @@ type Router = {
   hold: Partial<Record<string, Promise<void>>>;
   failOnce: Set<string>;
   fake: Partial<Record<string, { status: number; json: unknown }>>;
-  seen: { type: string; body: unknown; log: string[] }[];
+  seen: { type: string; body: unknown; log: string[]; at: number }[];
 };
 async function installRouter(page: Page): Promise<Router> {
   const router: Router = {
@@ -286,10 +293,12 @@ async function installRouter(page: Page): Promise<Router> {
       return route.fulfill({ response, json: body });
     }
     const body = request.postDataJSON() as { type: string };
+    const at = Date.now();
     router.seen.push({
       type: body.type,
       body,
       log: await pushLog(page).catch(() => []),
+      at,
     });
     const hold = router.hold[body.type];
     if (hold) await hold;
@@ -734,7 +743,7 @@ test('끄기 중 이 탭의 계정이 바뀌면 늦게 끝난 기기 해지 뒤 
   expect(posts(router, 'pushUnsubscribe')).toEqual([]);
 });
 
-test('로그아웃 기기 해지가 3초 기한을 넘기면 늦게 끝난 조회로 다음 계정의 구독을 해지하지 않는다', async ({
+test('로그아웃은 기기 조회를 기다리지 않고 곧바로 logout을 보내고, 늦게 끝난 조회로 다음 계정의 구독을 해지하지 않는다', async ({
   page,
   playwright,
   baseURL,
@@ -746,7 +755,12 @@ test('로그아웃 기기 해지가 3초 기한을 넘기면 늦게 끝난 조�
   await openAccountSheet(page);
   await setControl(page, { holdNextLookup: true });
   const resynced = waitPost(page, 'pushSubscribe');
+  const clicked = Date.now();
   await switchAccount(page, router, key);
+  // Sent while the device lookup is still held, without a 3-second wait.
+  const [logout] = posts(router, 'logout');
+  expect(logout!.log).toEqual([]);
+  expect(logout!.at - clicked).toBeLessThan(2000);
   expect((await resynced).status()).toBe(200);
   await expectRow(page, 'on');
   const before = (await control(page)).lookups;
@@ -935,6 +949,120 @@ test('기기 구독의 서버 키를 알 수 없으면 켜짐으로 보이거나
   await dialog.getByRole('button', { name: '알림 켜기' }).click();
   expect((await saved).status()).toBe(200);
   await expect(dialog.getByText('알림 켜짐', { exact: true })).toBeVisible();
+});
+
+test('로그아웃은 진행 중인 저장이 끝난 뒤 logout을 한 번 보내고, 로그아웃 중에는 알림 켜기를 시작하지 않는다', async ({
+  page,
+  context,
+  playwright,
+  baseURL,
+}) => {
+  const account = await pushAccount(playwright, baseURL);
+  const router = await installRouter(page);
+  // The real session stays: only this tab's logout answer stands in.
+  router.fake.logout = { status: 200, json: {} };
+  await openOn(page, account, await serverKey(account));
+
+  // 1) A save in flight (끄기's pushUnsubscribe) when logout is pressed.
+  const held = deferred();
+  router.hold.pushUnsubscribe = held.promise;
+  let dialog = await openAccountSheet(page);
+  await dialog.getByRole('button', { name: '끄기' }).click();
+  await expect.poll(() => posts(router, 'pushUnsubscribe').length).toBe(1);
+  // The saving state blocks pointer input; a keyboard press still reaches it.
+  await dialog
+    .getByRole('button', { name: '로그아웃' })
+    .evaluate((button: HTMLButtonElement) => button.click());
+  // Polling pauses during a save, so wait two frames instead of a poll.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  expect(posts(router, 'logout')).toEqual([]);
+  held.resolve();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(
+    '반가워요!',
+  );
+  expect(posts(router, 'logout')).toHaveLength(1);
+
+  // 2) 알림 켜기 pressed while the logout request is still out.
+  const second = await context.newPage();
+  const other = await installRouter(second);
+  const waiting = deferred();
+  other.hold.logout = waiting.promise;
+  other.fake.logout = { status: 200, json: {} };
+  await openApp(second, account, { mode: 'off' });
+  dialog = await openAccountSheet(second);
+  await dialog.getByRole('button', { name: '로그아웃' }).click();
+  await expect.poll(() => posts(other, 'logout').length).toBe(1);
+  await dialog
+    .getByRole('button', { name: '알림 켜기' })
+    .evaluate((button: HTMLButtonElement) => button.click());
+  waiting.resolve();
+  await expect(second.getByRole('heading', { level: 1 })).toContainText(
+    '반가워요!',
+  );
+  expect(await pushLog(second)).toEqual([]);
+  expect(posts(other, 'pushSubscribe')).toEqual([]);
+});
+
+test('탭 복귀의 구독 조회가 실패하면 이전 구독으로 등록하지 않고 꺼짐으로 본다', async ({
+  page,
+  playwright,
+  baseURL,
+}) => {
+  const account = await pushAccount(playwright, baseURL);
+  const router = await installRouter(page);
+  router.failOnce.add('pushSubscribe');
+  const first = waitPost(page, 'pushSubscribe');
+  await openApp(page, account, { mode: 'on', key: await serverKey(account) });
+  expect((await first).status()).toBe(503);
+  // The device loses the subscription and the next lookup fails.
+  await page.evaluate(() => {
+    const push = (window as unknown as { __push: PushControl }).__push;
+    push.subscription = null;
+    push.failNextLookup = true;
+  });
+  const before = (await control(page)).lookups;
+  await page.evaluate(() => {
+    const set = (value: DocumentVisibilityState) => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => value,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    set('hidden');
+    set('visible');
+  });
+  await expect
+    .poll(async () => (await control(page)).lookups)
+    .toBeGreaterThan(before);
+  await settle(page);
+  expect(posts(router, 'pushSubscribe')).toHaveLength(1);
+  await expectRow(page, 'off');
+});
+
+test('먼저 시작한 조회가 끝나지 않아도 최신 조회가 성공하면 다시 맞추기를 한 번 보낸다', async ({
+  page,
+  playwright,
+  baseURL,
+}) => {
+  const account = await pushAccount(playwright, baseURL);
+  const router = await installRouter(page);
+  await openApp(page, account, {
+    mode: 'on',
+    key: await serverKey(account),
+    holdFirstLookup: true,
+  });
+  await expect.poll(() => posts(router, 'pushSubscribe').length).toBe(1);
+  await expectRow(page, 'on');
+  await release(page, 'releaseLookup');
+  await settle(page);
+  expect(posts(router, 'pushSubscribe')).toHaveLength(1);
+  await expectRow(page, 'on');
 });
 
 test('모임 만들기·참가 직후 꺼짐이면 바텀시트가 한 번 뜨고 "나중에" 뒤에는 그 기기에서 뜨지 않는다', async ({

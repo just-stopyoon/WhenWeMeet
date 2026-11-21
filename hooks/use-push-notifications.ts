@@ -40,6 +40,10 @@ type Device =
       // The verified server key the subscription was made with, or null
       // when the browser does not say (or says something invalid).
       key: string | null;
+      // The epoch the lookup started in, and whether it succeeded. A failed
+      // lookup keeps no subscription: an old endpoint never comes back.
+      epoch: number;
+      ok: boolean;
     };
 
 type ServerKey = {
@@ -91,9 +95,10 @@ const readPermission = () =>
 // the epoch it started in and applies its next device call, server call or
 // state change only while that epoch is still current. The epoch moves on
 // any change of the signed-in account (this tab, another tab seen by a poll,
-// signing out), on every sign-in/sign-out here, at logout start and at the
-// logout deadline. Registrations, in-flight and failed re-syncs are keyed
-// by `epoch|endpoint`.
+// signing out), on every sign-in/sign-out here and at logout start.
+// Registrations, in-flight and failed re-syncs are keyed by `epoch|endpoint`.
+// Only the latest lookup's result counts; it must have succeeded in the
+// current epoch before anything is registered or shown as on.
 export function usePushNotifications({
   ready,
   user,
@@ -130,16 +135,22 @@ export function usePushNotifications({
   const bump = useCallback(() => setTick((value) => value + 1), []);
 
   const [epoch, setEpoch] = useState(0);
+  // Counts sign-ins seen here (any source); a logout's background device
+  // removal stops if another sign-in came after it started.
+  const [signIns, setSignIns] = useState(0);
   const identity = `${user}\n${session}`;
   const [seenIdentity, setSeenIdentity] = useState(identity);
   if (seenIdentity !== identity) {
     setSeenIdentity(identity);
     setEpoch((value) => value + 1);
+    if (user) setSignIns((value) => value + 1);
   }
   const epochRef = useRef(epoch);
+  const signInsRef = useRef(signIns);
   useLayoutEffect(() => {
     epochRef.current = epoch;
-  }, [epoch]);
+    signInsRef.current = signIns;
+  }, [epoch, signIns]);
 
   const workingRef = useRef(false);
   const releasing = useRef(false);
@@ -148,18 +159,26 @@ export function usePushNotifications({
   const mismatchTried = useRef(new Set<string>());
   // Keys proven by our own subscribe() call (the browser may not report it).
   const knownKeys = useRef(new Map<string, string>());
+  // The latest lookup started, and the latest one that has finished. Older
+  // lookups are superseded: their results and their waiting are ignored.
   const lookupId = useRef(0);
-  const pendingLookups = useRef(0);
+  const settledId = useRef(0);
 
-  // Reads the device's real subscription. Resolves with it (undefined when
-  // the lookup failed).
+  // Reads the device's real subscription. Resolves with it when this is
+  // still the latest lookup and it succeeded; undefined otherwise.
   const lookup = useCallback(async () => {
     if (!pushApis()) return undefined;
     const id = ++lookupId.current;
-    pendingLookups.current++;
+    const started = epochRef.current;
     try {
       const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
+      let subscription: PushSubscription | null = null;
+      let ok = true;
+      try {
+        subscription = await registration.pushManager.getSubscription();
+      } catch {
+        ok = false;
+      }
       let key: string | null = null;
       if (subscription) {
         const own = subscription.options?.applicationServerKey;
@@ -168,13 +187,20 @@ export function usePushNotifications({
           knownKeys.current.get(subscription.endpoint) ??
           null;
       }
-      if (id === lookupId.current)
-        setDevice({ ready: true, registration, subscription, key });
-      return subscription;
+      if (id !== lookupId.current) return undefined;
+      settledId.current = id;
+      setDevice({
+        ready: true,
+        registration,
+        subscription,
+        key,
+        epoch: started,
+        ok,
+      });
+      return ok ? subscription : undefined;
     } catch {
       return undefined;
     } finally {
-      pendingLookups.current--;
       setTick((value) => value + 1);
     }
   }, []);
@@ -196,8 +222,9 @@ export function usePushNotifications({
     void lookup();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      // Retry only failed pairs, and only after the fresh lookup.
-      void lookup().then(() => {
+      // Retry only failed pairs, and only after the fresh lookup succeeded.
+      void lookup().then((found) => {
+        if (found === undefined) return;
         failed.current.clear();
         bump();
       });
@@ -231,6 +258,8 @@ export function usePushNotifications({
   const serverKey = server && server.raw === publicKey ? server : null;
   const subscription = device.ready ? device.subscription : null;
   const deviceKey = device.ready ? device.key : null;
+  // The device result speaks for this epoch only once a lookup in it ended.
+  const deviceCurrent = device.ready && device.epoch === epoch;
   const matches =
     !!subscription && deviceKey !== null && deviceKey === serverKey?.canonical;
 
@@ -239,7 +268,7 @@ export function usePushNotifications({
   else if (!publicKey || (serverKey && !serverKey.canonical)) state = 'nokey';
   else if (supported === false) state = 'unsupported';
   else if (permission === 'denied') state = 'denied';
-  else if (supported === null || !device.ready || !serverKey || deviceOps > 0)
+  else if (supported === null || !deviceCurrent || !serverKey || deviceOps > 0)
     state = 'preparing';
   else if (
     matches &&
@@ -253,7 +282,9 @@ export function usePushNotifications({
   useEffect(() => {
     if (state !== 'off' || !subscription || !serverKey?.canonical) return;
     if (workingRef.current || releasing.current) return;
-    if (pendingLookups.current > 0) return;
+    // Only after the latest lookup ended and succeeded in this epoch.
+    if (settledId.current !== lookupId.current) return;
+    if (!device.ready || !device.ok || device.epoch !== epoch) return;
     // A key we could not verify is never treated as a match or a mismatch.
     if (deviceKey === null) return;
     if (deviceKey !== serverKey.canonical) {
@@ -299,6 +330,8 @@ export function usePushNotifications({
   // async step so iOS still sees the user gesture.
   function enable() {
     if (state !== 'off' || workingRef.current || !device.ready) return;
+    // Both sheets' buttons end here; nothing starts during a logout.
+    if (releasing.current) return;
     const bytes = serverKey?.bytes;
     const canonical = serverKey?.canonical;
     if (!bytes || !canonical) return;
@@ -335,6 +368,8 @@ export function usePushNotifications({
             registration,
             subscription: created,
             key: canonical,
+            epoch: started,
+            ok: true,
           });
           setRegistered({ epoch: started, endpoint: created.endpoint });
         },
@@ -364,38 +399,33 @@ export function usePushNotifications({
     }
   }
 
-  // Before logout, whatever the state: try to drop this device's
-  // subscription (R2). Work of the old epoch stops here; a lookup that has
-  // not finished by the deadline no longer removes anything.
-  async function releaseDevice() {
+  // At logout, whatever the state (R2, user decision A): start removing
+  // this device's subscription and return at once; logout does not wait.
+  // Work of the old epoch stops here. The removal's result never reaches
+  // the screen, and it stops if another sign-in came after it started.
+  function releaseDevice() {
     const mine = epochRef.current + 1;
     epochRef.current = mine;
     setEpoch(mine);
     setRegistered(null);
     releasing.current = true;
-    const current = () => epochRef.current === mine;
-    const attempt = (async () => {
+    const signedIn = signInsRef.current;
+    const quiet = () => signInsRef.current === signedIn;
+    void (async () => {
       if (!('serviceWorker' in navigator)) return;
       const found = await navigator.serviceWorker.getRegistration();
-      if (!current()) return;
+      if (!quiet()) return;
       const existing = await found?.pushManager?.getSubscription();
-      if (!current() || !existing) return;
-      await removeFromDevice(existing);
+      if (!quiet() || !existing) return;
+      await existing.unsubscribe();
     })().catch(() => {});
-    const late = await Promise.race([
-      attempt.then(() => false),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 3000)),
-    ]);
-    if (late && current()) {
-      epochRef.current = mine + 1;
-      setEpoch(mine + 1);
-    }
   }
 
-  // After the logout request answered (either way).
+  // After the logout request answered (either way). When the session stays
+  // (logout failed), read the device again for this epoch.
   function logoutDone() {
     releasing.current = false;
-    bump();
+    void lookup();
   }
 
   return { state, working, enable, disable, releaseDevice, logoutDone };
