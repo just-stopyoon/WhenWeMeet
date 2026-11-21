@@ -101,18 +101,23 @@ test.describe('Web Push 발송 연결', () => {
 
     const blocked = await count('WEB_PUSH_BLOCKED_ATTEMPT');
     const network = await count('WEB_PUSH_NETWORK_ATTEMPT');
+    const done = await count('WEB_PUSH_DISPATCH_DONE');
     const closed = (await post(memberA, {
       type: 'schedule',
       roomId: room.id,
       slots,
     })) as { room: Room };
     expect(closed.room.stage).toBe('date');
+    // The scheduled task logs WEB_PUSH_DISPATCH_DONE after its last send, so
+    // the counts below are taken once that task has finished.
     await expect
-      .poll(() => count('WEB_PUSH_BLOCKED_ATTEMPT'), { timeout: 10_000 })
-      .toBe(blocked + 1);
-    // Give a duplicate a chance to appear before counting exactly.
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+      .poll(() => count('WEB_PUSH_DISPATCH_DONE'), { timeout: 10_000 })
+      .toBe(done + 1);
     expect(await count('WEB_PUSH_BLOCKED_ATTEMPT')).toBe(blocked + 1);
     expect(await count('WEB_PUSH_NETWORK_ATTEMPT')).toBe(network);
+    // A second task for the same transition would log a second DONE line.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(await count('WEB_PUSH_DISPATCH_DONE')).toBe(done + 1);
+    expect(await count('WEB_PUSH_BLOCKED_ATTEMPT')).toBe(blocked + 1);
   });
 });

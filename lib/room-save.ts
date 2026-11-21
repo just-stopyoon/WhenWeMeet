@@ -21,6 +21,12 @@ export type RoomSaveDeps = {
 
 export const roomSaveAttempts = 8;
 
+// What the API route replies when saveRoomAction returns null.
+export const roomSaveConflict = {
+  status: 409,
+  body: { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },
+} as const;
+
 // Returns the saved room, or null when every attempt lost the version race.
 // Errors from the read or applyAction() reach the caller unchanged.
 export async function saveRoomAction(
@@ -37,8 +43,14 @@ export async function saveRoomAction(
     if (!(await deps.update(row, updated))) continue;
     // Only the winning attempt's own before/after decide the notices, and
     // nothing is sent before the UPDATE has succeeded.
-    const notices = pushNotices(before, updated, user);
-    if (notices.length) deps.schedule(deliverQuietly(deps, notices));
+    // The room is saved: preparing or scheduling notices must not turn this
+    // into an error the user would retry (Q12).
+    try {
+      const notices = pushNotices(before, updated, user);
+      if (notices.length) deps.schedule(deliverQuietly(deps, notices));
+    } catch {
+      logQuietly(deps);
+    }
     return updated;
   }
   return null;
@@ -50,10 +62,14 @@ async function deliverQuietly(deps: RoomSaveDeps, notices: PushNotice[]) {
   try {
     await deps.dispatch(notices);
   } catch {
-    try {
-      (deps.log ?? console.warn)('WEB_PUSH_DISPATCH_FAILED');
-    } catch {
-      // Logging must not reject the scheduled task either.
-    }
+    logQuietly(deps);
+  }
+}
+
+function logQuietly(deps: RoomSaveDeps) {
+  try {
+    (deps.log ?? console.warn)('WEB_PUSH_DISPATCH_FAILED');
+  } catch {
+    // Logging must not reject the scheduled task or the save either.
   }
 }

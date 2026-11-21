@@ -20,7 +20,11 @@ import {
   koreanToday,
   type UnvalidatedAction,
 } from '../../../lib/room-actions';
-import { saveRoomAction, type RoomRow } from '../../../lib/room-save';
+import {
+  roomSaveConflict,
+  saveRoomAction,
+  type RoomRow,
+} from '../../../lib/room-save';
 import { withPushPublicKey } from '../../../lib/vapid-keys';
 import { isPushSendBlocked } from '../../../lib/web-push';
 
@@ -369,10 +373,7 @@ export async function POST(req: Request) {
       return reply({
         room: saved.members.includes(user) ? await withNames(saved) : null,
       });
-    return reply(
-      { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },
-      409,
-    );
+    return reply(roomSaveConflict.body, roomSaveConflict.status);
   } catch (error) {
     return reply(
       {

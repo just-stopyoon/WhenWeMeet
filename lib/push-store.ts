@@ -130,6 +130,27 @@ export async function listPushTargets(
   return result.results;
 }
 
+// Re-checked right before the network call: the row read by listPushTargets
+// still has the same generation, still belongs to the same account, and its
+// registering session still exists, is that account's and has not expired on
+// the database clock. A move, re-registration, unsubscribe, logout or expiry
+// after the target query makes this false.
+export async function isPushTargetCurrent(
+  db: SqlDatabase,
+  target: Pick<PushTarget, 'endpoint' | 'generation' | 'account'>,
+): Promise<boolean> {
+  const found = await db
+    .prepare(
+      `SELECT 1 AS current FROM push_subscriptions JOIN sessions ON sessions.token=push_subscriptions.session
+       WHERE push_subscriptions.endpoint=? AND push_subscriptions.generation=?
+         AND push_subscriptions.account_id=? AND sessions.name=push_subscriptions.account_id
+         AND sessions.expires>${databaseNow}`,
+    )
+    .bind(target.endpoint, target.generation, target.account)
+    .first();
+  return found !== null;
+}
+
 // A 404·410 removes only the row that was sent to: same endpoint and same
 // generation. A row registered again, moved or rewritten meanwhile has a new
 // generation and stays.

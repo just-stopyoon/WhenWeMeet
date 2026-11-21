@@ -163,7 +163,9 @@ export type PushOutcome =
   | { kind: 'transport-failure' }
   | { kind: 'key-failure' }
   | { kind: 'invalid-subscription' }
-  | { kind: 'blocked' };
+  | { kind: 'blocked' }
+  // The caller's last check right before the network said the row changed.
+  | { kind: 'stale' };
 
 export type PushDelivery = {
   subscription: PushSubscriptionRecord;
@@ -178,6 +180,9 @@ export type SendPushOptions = {
   fetch: typeof fetch;
   // Test-server switch (R9): sign and encrypt, then skip the network.
   blocked?: boolean;
+  // Last check right before the network (and before the blocked branch), by
+  // index into `subscriptions`; false or an exception skips that one.
+  confirm?: (index: number) => Promise<boolean>;
   log?: (line: string) => void;
   now?: () => number;
   encryption?: EncryptionOverrides;
@@ -197,6 +202,7 @@ function describe(outcome: PushOutcome): string {
 
 async function deliver(
   subscription: PushSubscriptionRecord,
+  index: number,
   options: SendPushOptions,
   signingKey: Promise<CryptoKey | null>,
   deadline: AbortSignal,
@@ -227,6 +233,15 @@ async function deliver(
     );
   } catch {
     return { kind: 'key-failure' };
+  }
+  if (options.confirm) {
+    let current = false;
+    try {
+      current = await options.confirm(index);
+    } catch {
+      // A failed check is treated like a changed row: nothing is sent.
+    }
+    if (!current) return { kind: 'stale' };
   }
   // The 10-second limit covers the whole subscription, not only the request:
   // a deadline that passed while checking, signing or encrypting sends nothing.
@@ -277,6 +292,7 @@ export async function sendPush(
       try {
         outcome = await deliver(
           subscription,
+          index,
           options,
           signingKey,
           deadline.signal,

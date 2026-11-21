@@ -13,7 +13,11 @@ import {
   type SqlListStatement,
 } from '../lib/push-store';
 import { base64UrlEncode } from '../lib/push-subscription';
-import { saveRoomAction, type RoomRow } from '../lib/room-save';
+import {
+  roomSaveConflict,
+  saveRoomAction,
+  type RoomRow,
+} from '../lib/room-save';
 
 // Issue #14 seam 2 (T3, R7 ①): the room save loop with injected row reads,
 // conditional UPDATE and scheduling, and the scheduled work run against the
@@ -214,6 +218,31 @@ void test('예약한 작업이 실패해도 저장 결과는 그대로 성공이
     await run.scheduled[0];
     assert.deepEqual(run.logs, ['WEB_PUSH_DISPATCH_FAILED']);
   }
+});
+
+void test('8회 충돌은 라우트가 그대로 내는 409와 기존 문구로 바뀐다', async () => {
+  const run = loop(
+    Array.from({ length: 8 }, (_, index) => row(waiting(), index)),
+    Array.from({ length: 8 }, () => false),
+  );
+  assert.equal(await saveRoomAction(run.deps, 'friend', submit), null);
+  // app/api/meeting/route.ts replies `{ error }` with this status on null.
+  assert.deepEqual(roomSaveConflict, {
+    status: 409,
+    body: { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },
+  });
+});
+
+void test('알림 예약이 동기 예외를 던져도 이미 저장된 방을 돌려주고 고정 한 줄만 기록한다', async () => {
+  const run = loop([row(closing(), 1)], [true]);
+  const deps = {
+    ...run.deps,
+    schedule: () => {
+      throw new Error('https://fcm.googleapis.com/secret');
+    },
+  };
+  assert.equal((await saveRoomAction(deps, 'friend', submit))?.stage, 'date');
+  assert.deepEqual(run.logs, ['WEB_PUSH_DISPATCH_FAILED']);
 });
 
 // ----------------------------------------------------- dispatch on SQLite
@@ -492,6 +521,69 @@ void test('세션이 다른 계정의 것이면 그 구독에는 보내지 않�
   assert.deepEqual(send.sent, []);
 });
 
+// Between the target query and the network call (here: while the VAPID key
+// is read) the device moves to another account, logs out or expires. The
+// check right before sending must skip it, in blocked mode too.
+const changes: [string, (sqlite: DatabaseSync) => void][] = [
+  [
+    '다른 계정으로 이동',
+    (sqlite) =>
+      sqlite
+        .prepare(
+          "UPDATE push_subscriptions SET account_id='friend', session='f1', generation='moved'",
+        )
+        .run(),
+  ],
+  [
+    'logout',
+    (sqlite) => sqlite.prepare("DELETE FROM sessions WHERE token='h1'").run(),
+  ],
+  [
+    '세션 만료',
+    (sqlite) =>
+      sqlite
+        .prepare("UPDATE sessions SET expires=? WHERE token='h1'")
+        .run(Date.now() - 1),
+  ],
+];
+for (const [name, change] of changes)
+  for (const blocked of [false, true])
+    void test(`대상 조회 뒤 ${name}되면 보내기 직전 확인에서 건너뛴다${blocked ? '(차단 모드)' : ''}`, async () => {
+      let pending = true;
+      const holder: { sqlite?: DatabaseSync } = {};
+      const made = database(migrations, (query) => {
+        if (pending && holder.sqlite && /FROM push_vapid_keys/.test(query)) {
+          pending = false;
+          change(holder.sqlite);
+        }
+      });
+      const sqlite = (holder.sqlite = made.sqlite);
+      addSession(sqlite, 'host', 'h1');
+      addSession(sqlite, 'friend', 'f1');
+      await subscribe(made.db, 'h1', 'device');
+      const send = dispatcher(made.db, () => 201, blocked);
+      await send.run([notice('host')]);
+      assert.equal(pending, false, 'the change ran');
+      assert.deepEqual(send.sent, []);
+      assert.ok(
+        send.logs.every((line) => !line.startsWith('WEB_PUSH_BLOCKED_ATTEMPT')),
+      );
+      assert.ok(send.logs.includes('WEB_PUSH_RESULT stale'));
+    });
+
+void test('보내기 직전 확인이 실패하면 보내지 않는다', async () => {
+  const made = database(migrations, (query) => {
+    if (/AND push_subscriptions\.generation=/.test(query))
+      throw new Error('D1_ERROR https://fcm.googleapis.com/fcm/send/secret');
+  });
+  addSession(made.sqlite, 'host', 'h1');
+  await subscribe(made.db, 'h1', 'device');
+  const send = dispatcher(made.db, () => 201);
+  await send.run([notice('host')]);
+  assert.deepEqual(send.sent, []);
+  assert.ok(send.logs.every((line) => !line.includes('https://')));
+});
+
 void test('발송 차단 중이면 네트워크로 나가지 않고 행도 지우지 않는다', async () => {
   const { sqlite, db } = database();
   addSession(sqlite, 'host', 'h1');
@@ -503,6 +595,7 @@ void test('발송 차단 중이면 네트워크로 나가지 않고 행도 지�
   assert.deepEqual(send.logs, [
     'WEB_PUSH_BLOCKED_ATTEMPT host=fcm',
     'WEB_PUSH_RESULT blocked',
+    'WEB_PUSH_DISPATCH_DONE',
   ]);
   assert.deepEqual(generations(sqlite), before);
 });

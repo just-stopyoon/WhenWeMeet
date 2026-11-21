@@ -6,6 +6,7 @@
 
 import { pushPayload, type PushNotice } from './push-notices';
 import {
+  isPushTargetCurrent,
   listPushTargets,
   removeGonePushSubscription,
   type SqlListDatabase,
@@ -54,6 +55,8 @@ export async function dispatchPushNotices(
         vapid,
         fetch: deps.fetch,
         blocked: deps.blocked,
+        // The target query may be stale by the time a payload is ready.
+        confirm: (index) => isPushTargetCurrent(deps.db, mine[index]),
         log,
       });
       // sendPush keeps the order of `subscriptions`.
@@ -69,4 +72,7 @@ export async function dispatchPushNotices(
       );
     }),
   );
+  // One line per task that reached the send stage (R9 positive control waits
+  // for it; tasks with no targets return earlier and log nothing).
+  log('WEB_PUSH_DISPATCH_DONE');
 }
