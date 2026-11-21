@@ -161,11 +161,14 @@ API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mj
 - Pretendard v1.3.9, 행간 150%, 자간 -0.025em. 타이틀 700 / 소제목·버튼 600 / 본문·placeholder 500 / 입력값 600.
 - public/app-logo.png는 사용자가 제공한 로고이며 로그인 화면, 상단 브랜드, 브라우저 탭 아이콘에 사용합니다. 홈 화면 아이콘은 이 로고로 만든 `public/icons/`의 아이콘을 씁니다.
 
-신규 DB와 로컬 미리보기에는 기존 SQL에 이어 `drizzle/0001_account_profiles.sql`을 적용해야 합니다. Sites는 배포 시 추가 마이그레이션을 적용합니다. 로컬 빌드 후에는 다음과 같이 적용합니다(운영 DB 옵션을 사용하지 않습니다).
+신규 DB와 로컬 미리보기에는 기존 SQL에 이어 `drizzle/0001_account_profiles.sql`과 `drizzle/0002_push_subscriptions.sql`을 적용해야 합니다. Sites는 배포 시 추가 마이그레이션을 적용합니다. 로컬 빌드 후에는 다음과 같이 적용합니다(운영 DB 옵션을 사용하지 않습니다).
 
 ```sh
 npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0000_shared_rooms.sql
 npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0001_account_profiles.sql
+npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0002_push_subscriptions.sql
 ```
+
+`0002`는 알림 구독 테이블과 VAPID 키 테이블만 새로 만들므로, 이미 쓰던 로컬 D1에 적용해도 기존 계정·모임은 그대로 남습니다. 적용하지 않은 D1에서도 조회·로그인·회원가입은 지금처럼 동작하지만, 응답에 알림 공개 키(`pushPublicKey`)가 빠져 알림 UI가 숨겨집니다. 적용했는지는 로그인한 상태의 `/api/meeting` GET 응답에 `pushPublicKey`가 있는지로 확인합니다.
 
 `npm run test:all`은 별도 임시 D1에 마이그레이션을 적용합니다. 이메일 및 푸시 알림은 이 변경에 포함하지 않습니다.

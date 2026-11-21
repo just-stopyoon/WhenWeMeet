@@ -6,13 +6,25 @@ import type {
   MeetingSnapshot,
 } from '../../../lib/meeting-contract';
 import {
+  d1VapidKeyStore,
+  removePushSubscription,
+  savePushSubscription,
+} from '../../../lib/push-store';
+import {
+  checkPushEndpoint,
+  checkPushSubscription,
+} from '../../../lib/push-subscription';
+import {
   applyAction,
   expiresOn,
   koreanToday,
   type UnvalidatedAction,
 } from '../../../lib/room-actions';
+import { withPushPublicKey } from '../../../lib/vapid-keys';
 
 const db = () => (env as unknown as { DB: D1Database }).DB;
+// Must not reference the Web Push tables (drizzle/0002): a database without
+// them keeps working, and deleting a session cascades to its subscriptions.
 async function initialize() {
   await db().batch([
     db().prepare(
@@ -34,6 +46,7 @@ async function initialize() {
     db().prepare('DELETE FROM attempts WHERE expires < ?').bind(Date.now()),
   ]);
 }
+const pushInvalid = '알림 구독 정보를 확인해 주세요.';
 const reply = (
   data: MeetingSnapshot | MeetingResponse | MeetingError,
   status = 200,
@@ -138,7 +151,14 @@ export async function GET(req: Request) {
     const user = await currentUser(req);
     return reply(
       user
-        ? { user, nickname: await nicknameFor(user), rooms: await list(user) }
+        ? await withPushPublicKey(
+            {
+              user,
+              nickname: await nicknameFor(user),
+              rooms: await list(user),
+            },
+            d1VapidKeyStore(db()),
+          )
         : { user: '', rooms: [] },
     );
   } catch {
@@ -220,11 +240,14 @@ export async function POST(req: Request) {
         .bind(await digest(token), name, Date.now() + 30 * 86400000)
         .run();
       return reply(
-        {
-          user: name,
-          nickname: await nicknameFor(name),
-          rooms: await list(name),
-        },
+        await withPushPublicKey(
+          {
+            user: name,
+            nickname: await nicknameFor(name),
+            rooms: await list(name),
+          },
+          d1VapidKeyStore(db()),
+        ),
         200,
         {
           'Set-Cookie': cookie(req, token, 30 * 86400),
@@ -241,6 +264,27 @@ export async function POST(req: Request) {
       return reply({}, 200, { 'Set-Cookie': cookie(req, '', 0) });
     }
     await limit('action:' + user, 300);
+    if (a.type === 'pushSubscribe') {
+      const subscription = await checkPushSubscription(a.subscription);
+      if (!subscription) return reply({ error: pushInvalid }, 400);
+      const saved = await savePushSubscription(
+        db(),
+        await digest(cookieToken(req)),
+        subscription,
+      );
+      if (saved === 'session-ended')
+        return reply({ error: '다시 로그인해 주세요.' }, 401);
+      if (saved === 'owned-elsewhere')
+        return reply({ error: pushInvalid }, 400);
+      return reply({});
+    }
+    if (a.type === 'pushUnsubscribe') {
+      const endpoint = checkPushEndpoint(a.endpoint);
+      if (!endpoint) return reply({ error: pushInvalid }, 400);
+      return reply({
+        removed: await removePushSubscription(db(), user, endpoint),
+      });
+    }
     if (a.type === 'create') {
       if (
         typeof a.title !== 'string' ||

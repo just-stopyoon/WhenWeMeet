@@ -107,6 +107,32 @@ export type RequestContractChecks = [
   Assert<Assignable<RequestOf<'join'>, RoomRequest>>,
   Assert<Not<Assignable<RequestOf<'login'>, RoomRequest>>>,
   Assert<Not<Assignable<RequestOf<'logout'>, RoomRequest>>>,
+  Assert<
+    Assignable<
+      {
+        type: 'pushSubscribe';
+        subscription: {
+          endpoint: string;
+          keys: { p256dh: string; auth: string };
+        };
+      },
+      MeetingRequest
+    >
+  >,
+  Assert<
+    Not<
+      Assignable<
+        { type: 'pushSubscribe'; subscription: { endpoint: string } },
+        MeetingRequest
+      >
+    >
+  >,
+  Assert<
+    Assignable<{ type: 'pushUnsubscribe'; endpoint: string }, MeetingRequest>
+  >,
+  Assert<Not<Assignable<{ type: 'pushUnsubscribe' }, MeetingRequest>>>,
+  Assert<Not<Assignable<RequestOf<'pushSubscribe'>, RoomRequest>>>,
+  Assert<Not<Assignable<RequestOf<'pushUnsubscribe'>, RoomRequest>>>,
 ];
 
 export type ResponseContractChecks = [
@@ -120,6 +146,36 @@ export type ResponseContractChecks = [
   Assert<Not<Assignable<{ room: null }, MeetingResponse<RequestOf<'vote'>>>>>,
   Assert<Not<Assignable<'room', keyof MeetingResponse<RequestOf<'login'>>>>>,
   Assert<Not<Assignable<{ room: Room }, MeetingResponse<RequestOf<'logout'>>>>>,
+  Assert<
+    Assignable<
+      MeetingResponse<RequestOf<'pushSubscribe'>>,
+      Record<string, never>
+    >
+  >,
+  Assert<
+    Assignable<
+      MeetingResponse<RequestOf<'pushUnsubscribe'>>,
+      { removed: boolean }
+    >
+  >,
+  Assert<
+    Not<Assignable<{ room: Room }, MeetingResponse<RequestOf<'pushSubscribe'>>>>
+  >,
+  Assert<
+    Not<Assignable<'room', keyof MeetingResponse<RequestOf<'pushUnsubscribe'>>>>
+  >,
+  Assert<Assignable<{ user: string; rooms: [] }, MeetingSnapshot>>,
+  Assert<
+    Assignable<
+      { user: string; rooms: []; pushPublicKey: string },
+      MeetingSnapshot
+    >
+  >,
+  Assert<
+    Not<
+      Assignable<{ user: string; rooms: []; pushPublicKey: 1 }, MeetingSnapshot>
+    >
+  >,
   Assert<Not<Assignable<MeetingError, MeetingResponse>>>,
   Assert<Not<Assignable<null, MeetingResponse>>>,
 ];

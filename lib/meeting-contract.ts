@@ -44,16 +44,28 @@ export type MeetingRequest =
       name: string;
       category: Room['links'][number]['category'];
     }
-  | { type: 'deleteLink'; roomId: string; id: string };
+  | { type: 'deleteLink'; roomId: string; id: string }
+  | {
+      type: 'pushSubscribe';
+      subscription: {
+        endpoint: string;
+        keys: { p256dh: string; auth: string };
+      };
+    }
+  | { type: 'pushUnsubscribe'; endpoint: string };
 
+// Requests answered with a room. Authentication and Web Push requests are not.
 export type RoomRequest = Exclude<
   MeetingRequest,
-  { type: 'login' | 'signup' | 'logout' }
+  { type: 'login' | 'signup' | 'logout' | 'pushSubscribe' | 'pushUnsubscribe' }
 >;
 export type MeetingSnapshot = {
   user: string;
   nickname?: string;
   rooms: Room[];
+  // VAPID public key (base64url, 65 bytes). Missing when not signed in or
+  // when the key is unavailable; the app then hides the notification UI.
+  pushPublicKey?: string;
 };
 export type MeetingError = { error: string };
 
@@ -62,8 +74,10 @@ export type MeetingError = { error: string };
 export type MeetingResponse<R extends MeetingRequest = MeetingRequest> =
   R extends { type: 'login' | 'signup' }
     ? MeetingSnapshot
-    : R extends { type: 'logout' }
+    : R extends { type: 'logout' | 'pushSubscribe' }
       ? Record<string, never>
-      : R extends { type: 'remove' }
-        ? { room: Room | null }
-        : { room: Room };
+      : R extends { type: 'pushUnsubscribe' }
+        ? { removed: boolean }
+        : R extends { type: 'remove' }
+          ? { room: Room | null }
+          : { room: Room };
