@@ -17,7 +17,10 @@ const post = (body?: ReadableStream) =>
 // A byte source that writes straight into the reader's view, so `delivered`
 // is exactly what discardBody asked for. `next` returns how many bytes it may
 // still give (Infinity: endless, 0: end, null: stall).
-function byteSource(next: (delivered: number) => number | null) {
+function byteSource(
+  next: (delivered: number) => number | null,
+  maxChunk = Infinity,
+) {
   const state = { delivered: 0, cancelled: false, closed: false };
   const body = new ReadableStream({
     type: 'bytes',
@@ -32,7 +35,7 @@ function byteSource(next: (delivered: number) => number | null) {
       }
       const request = controller.byobRequest;
       if (!request?.view) throw new Error('expected a BYOB read');
-      const size = Math.min(request.view.byteLength, available);
+      const size = Math.min(request.view.byteLength, available, maxChunk);
       state.delivered += size;
       request.respond(size);
     },
@@ -81,7 +84,11 @@ void test(
   { timeout: 5000 },
   async () => {
     // Ends after 1MiB only so a broken helper fails instead of hanging.
-    const { req, state } = byteSource((delivered) => 1024 * 1024 - delivered);
+    // 1000B pieces leave a last read smaller than the helper's buffer.
+    const { req, state } = byteSource(
+      (delivered) => 1024 * 1024 - delivered,
+      1000,
+    );
     await discardBody(req);
     await wait(0);
     assert.equal(state.delivered, DISCARD_LIMIT_BYTES);
