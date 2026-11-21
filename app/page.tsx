@@ -191,6 +191,7 @@ export default function Home() {
     publicKey: pushPublicKey,
     session,
     save: send,
+    onError: setToast,
   });
   const sheetContext = JSON.stringify([
     user,
@@ -295,20 +296,24 @@ export default function Home() {
   }
   // After a create/join success: once, only when off or unsupported, only on
   // that room's screen, and never after "나중에" on this device. While the
-  // device is still preparing, wait for the result. Runs after the room
-  // switch above so its sheet reset does not close this sheet.
+  // device is still preparing, or another sheet is open, wait (decided once,
+  // after both). Runs after the room switch above so its sheet reset does
+  // not close this sheet.
   if (pushPromptRoom) {
     if (view !== 'room' || active !== pushPromptRoom) setPushPromptRoom('');
-    else if (push.state !== 'preparing') {
+    else if (push.state !== 'preparing' && !sheet) {
       setPushPromptRoom('');
       if (
         (push.state === 'off' || push.state === 'unsupported') &&
-        !sheet &&
         !pushPromptDismissed()
       )
         changeSheet('push');
     }
   }
+  // An open prompt closes once the state has no prompt (e.g. a re-sync made
+  // it on, or the key went missing); focus then follows the closing rule.
+  if (sheet === 'push' && push.state !== 'off' && push.state !== 'unsupported')
+    changeSheet(null);
   function setRegionVotes(choices: string[]) {
     if (room)
       setRegionDraft({ context: regionVoteContext(room, user), choices });
@@ -552,7 +557,9 @@ export default function Home() {
     try {
       // R2: whatever the state, try to drop this device's subscription first.
       await push.releaseDevice();
-      if (!(await send({ type: 'logout' }))) return;
+      const done = await send({ type: 'logout' });
+      push.logoutDone();
+      if (!done) return;
     } finally {
       loggingOut.current = false;
     }
