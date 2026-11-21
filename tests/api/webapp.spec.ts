@@ -1,4 +1,4 @@
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect } from '../support/fixtures';
 
 type Tag = Record<string, string>;
@@ -8,28 +8,31 @@ type ManifestIcon = {
   type?: string;
   purpose?: string;
 };
+type Head = { link: Tag[]; meta: Tag[] };
 
-const decode = (value: string) =>
-  value
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#x27;', "'")
-    .replaceAll('&#39;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&');
+// The fixed public URL for each manifest icon purpose and size (issue #11).
+const expectedIcons: Record<string, string> = {
+  'any 192x192': '/icons/icon-192.png',
+  'any 512x512': '/icons/icon-512.png',
+  'maskable 512x512': '/icons/icon-maskable-512.png',
+};
 
-// Reads the tags a browser sees in <head>, independent of how they are rendered.
-function headTags(html: string, name: 'link' | 'meta'): Tag[] {
-  const head = html.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
-  expect(head, 'The document has no <head>.').toBeTruthy();
-  return [...head![1].matchAll(new RegExp(`<${name}\\b([^>]*)>`, 'gi'))].map(
-    ([, attributes]) =>
-      Object.fromEntries(
-        [...attributes.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map(
-          ([, key, value]) => [key.toLowerCase(), decode(value)],
+// Parses the served HTML with the browser's HTML parser and reads the real
+// <head> elements, so comments and quoting follow browser behavior.
+async function headTags(page: Page, html: string): Promise<Head> {
+  return page.evaluate((source) => {
+    const doc = new DOMParser().parseFromString(source, 'text/html');
+    const read = (name: string) =>
+      [...doc.head.querySelectorAll(name)].map((element) =>
+        Object.fromEntries(
+          [...element.attributes].map((attribute) => [
+            attribute.name,
+            attribute.value,
+          ]),
         ),
-      ),
-  );
+      );
+    return { link: read('link'), meta: read('meta') };
+  }, html);
 }
 
 function single(tags: Tag[], key: string, value: string): Tag {
@@ -59,13 +62,13 @@ async function fetchPng(request: APIRequestContext, url: URL) {
 test('홈 화면 앱 메타·앱 정보·아이콘이 HTML과 응답에서 일치한다', async ({
   request,
   baseURL,
+  page,
 }) => {
   const documentUrl = new URL('/', baseURL);
-  const page = await request.get(documentUrl.href);
-  expect(page.status()).toBe(200);
-  const html = await page.text();
-  const metas = headTags(html, 'meta');
-  const links = headTags(html, 'link');
+  const documentResponse = await request.get(documentUrl.href);
+  expect(documentResponse.status()).toBe(200);
+  const html = await documentResponse.text();
+  const { meta: metas, link: links } = await headTags(page, html);
 
   expect(single(metas, 'name', 'theme-color').content).toBe('#ffffff');
   const viewport = single(metas, 'name', 'viewport')
@@ -116,15 +119,22 @@ test('홈 화면 앱 메타·앱 정보·아이콘이 HTML과 응답에서 일�
   expect(Array.isArray(icons)).toBe(true);
   expect(
     icons.map((icon) => `${icon.purpose ?? 'any'} ${icon.sizes}`).sort(),
-  ).toEqual(['any 192x192', 'any 512x512', 'maskable 512x512']);
+  ).toEqual(Object.keys(expectedIcons).sort());
   for (const icon of icons) {
-    const size = await fetchPng(request, new URL(icon.src, manifestUrl));
+    const key = `${icon.purpose ?? 'any'} ${icon.sizes}`;
+    const url = new URL(icon.src, manifestUrl);
+    expect(url.href, key).toBe(new URL(expectedIcons[key], documentUrl).href);
+    expect(icon.type, key).toBe('image/png');
+    const size = await fetchPng(request, url);
     expect(size, icon.src).toBe(icon.sizes);
   }
 
   const apple = new URL(
     single(links, 'rel', 'apple-touch-icon').href,
     documentUrl,
+  );
+  expect(apple.href).toBe(
+    new URL('/icons/apple-touch-icon.png', documentUrl).href,
   );
   expect(await fetchPng(request, apple)).toBe('180x180');
 
