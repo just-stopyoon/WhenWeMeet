@@ -86,7 +86,7 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·저장 중 상태와 `pending`/`generation` 동시성 제어
 - `components/meeting/connection-view.tsx`: 초기 연결 로딩·오류·수동 재시도 화면
 - `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
-- `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리
+- `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리. 다른 출처 POST는 거절하기 전에 `lib/discard-body.ts`로 본문을 64KiB·1초 상한 안에서 읽어 버림
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
 - `lib/meeting-contract.ts`: 화면·서버·테스트가 공유하는 액션별 요청과 응답 타입
 - `app/globals.css`: 디자인 토큰과 모바일 스타일
