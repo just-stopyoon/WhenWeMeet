@@ -1,5 +1,67 @@
 # API·브라우저 자동 테스트 검증 기록
 
+## 2026-11-21 홈 화면 앱 정보·아이콘과 viewport-fit
+
+이슈 #11. 시작 커밋 `0820b95`에서 만든 `feature/webapp-shape` 브랜치의 `c208fb8`(구현)·`6e7b438`(검수 반영)을 macOS, Node 24.3.0, Playwright 1.63.0, Chromium 153.0.8010.12에서 확인했습니다. 모두 로컬 결과이며 원격 CI·Vercel 게이트웨이·실제 배포 검증이 아닙니다.
+
+### 실행한 검사
+
+| 조건 | 명령 | 결과 |
+| --- | --- | --- |
+| 1. 전체 검증 | `npm run typecheck` → `npm run lint:all` → `npm run test:all` (`6e7b438`) | 셋 다 exit 0. 단위 42개 통과, Playwright 135개 통과(2.1분) |
+| 1. 새 테스트 | 위 `test:all` 출력 | `tests/api/webapp.spec.ts` "홈 화면 앱 메타·앱 정보·아이콘이 HTML과 응답에서 일치한다", `tests/api/gateway.spec.ts`의 "vercel.json은 앱 정보·아이콘 경로를 정확한 게이트웨이 경로로 넘긴다"·"게이트웨이는 앱 정보·아이콘 경로를 고정 원본에 no-store로 넘기고 POST를 막는다"·"게이트웨이는 비슷하지만 허용하지 않은 경로를 404로 막는다" 모두 통과 |
+| 2. 게이트웨이 | `node --check api/gateway.js && node scripts/build-vercel.mjs` (`6e7b438`) | exit 0 |
+| 4. 공백 | `git diff --check 0820b95...HEAD` (`6e7b438`), 새 파일은 stage 뒤 `git diff --cached --check` | 모두 통과 |
+
+기존 테스트의 기대값·이름·fixture는 바꾸지 않았고, 기존 테스트 실패는 없었습니다.
+
+### 변형 실험
+
+`6e7b438`을 기준으로 변형을 하나씩 적용하고 해당 새 spec만 `npx playwright test --project=api <spec>`로 돌렸습니다(테스트 서버는 실행마다 새로 빌드, 떠 있는 서버 재사용 없음). 변형 전과 되돌린 뒤 모두 `test -z "$(git status --porcelain --untracked-files=all)"`가 성공했고, 되돌린 뒤 같은 명령은 모두 exit 0이었습니다.
+
+| 변형 | exit | 실패한 테스트와 메시지 |
+| --- | --- | --- |
+| manifest `display`를 "browser"로 | 1 | webapp.spec.ts: `toMatchObject`에서 `"display": "standalone"` 기대, `"browser"` 받음 |
+| `public/icons/icon-512.png` 삭제 | 1 | webapp.spec.ts: `/icons/icon-512.png status` Expected 200, Received 404 |
+| HTML manifest `href`만 `/manifest-other.webmanifest`로 | 1 | webapp.spec.ts: Expected `.../manifest.webmanifest`, Received `.../manifest-other.webmanifest` |
+| `vercel.json` icon-512 rewrite의 destination 파일명을 `icon-512x.png`로 | 1 | gateway.spec.ts "vercel.json은…": destination 문자열 차이, "게이트웨이는…no-store…": `/icons/icon-512.png` Expected 200, Received 404 |
+| 게이트웨이 허용 목록에서 `/manifest.webmanifest` 삭제 | 1 | gateway.spec.ts "게이트웨이는…no-store…": `/manifest.webmanifest` Expected 200, Received 404 |
+| (검수) 받은 HTML의 manifest 링크를 주석으로 감쌈 | 1 | webapp.spec.ts: `Expected one tag with rel="manifest".` |
+| (검수) 받은 HTML의 manifest 링크 속성을 작은따옴표로 | 0 | 브라우저와 같이 링크를 찾아 통과(기대대로) |
+| (검수) manifest의 maskable `src`를 `/icons/icon-512.png`로 | 1 | webapp.spec.ts: `maskable 512x512` Expected `.../icon-maskable-512.png`, Received `.../icon-512.png` |
+| (검수) 192 아이콘의 선언 `type`을 `text/plain`으로 | 1 | webapp.spec.ts: `any 192x192` Expected `image/png`, Received `text/plain` |
+
+이슈의 변형 5개는 `c208fb8`에서도 같은 결과(모두 exit 1, 되돌린 뒤 exit 0)였습니다. 검수 반영 전 검사는 정규식으로 HTML을 읽어 주석 처리된 링크를 통과시키고, 같은 크기의 다른 아이콘 파일과 다른 선언 type도 통과시켰습니다. 반영 뒤 검사는 받은 HTML을 Chromium의 `DOMParser`로 해석하고, 아이콘 용도·크기별 고정 URL과 선언 type, apple-touch-icon 고정 URL을 대조합니다.
+
+### 아이콘
+
+- `public/icons/`의 PNG 네 개는 `public/app-logo.png`(1254×1254)의 흰 여백을 잘라 낸 1143px 정사각형에서 만들었습니다. 바깥 모서리는 로고 가장자리 안쪽 파란색의 평균 `#318afd`(49,138,253)로 채웠습니다. 생성 스크립트는 커밋하지 않았습니다.
+- maskable 512는 시계 파란 테두리·그림자를 포함한 그림 경계(채움색과 RGB 거리가 10을 넘는 가장 큰 연결 영역)를 기준으로 0.7951배 줄였습니다. 같은 방식으로 잰 최대 반지름은 202.6px(거리 8 기준 204.3px)이고, 안전 원 반지름 204.8px 안에 있습니다. 반영 전 파일은 같은 기준으로 246.5px였습니다.
+- 마스크 미리보기(iOS 둥근 사각형, Android 원, maskable을 지름 80% 원으로 실제 잘라 낸 모습)는 PR을 열기 전에 사용자가 확인합니다.
+
+### 미검증
+
+- 검사 지점 3(Chromium 설치 가능 판정)은 테스트로 넣지 않았습니다. headless Chromium 153.0.8010.12에서 CDP `Page.getInstallabilityErrors`가 오류 없이 빈 목록을 돌려주지만, manifest가 없는 시작 커밋에서도 똑같이 빈 목록이라 판정할 수 없습니다.
+  - 시작 커밋 상태: `{"installabilityErrors": []}`, `Page.getAppManifest`는 `{"url": "", "errors": [], "data": "", "manifest": {"display": "kUndefined", ...}}`
+  - 구현 뒤: `{"installabilityErrors": []}`, `Page.getAppManifest`의 `url`은 `http://127.0.0.1:4317/manifest.webmanifest`, `errors`는 `[]`, `display`는 `kStandalone`
+- iPhone 13 Safari 사람 확인 1–5(홈 화면에 추가 화면의 이름·아이콘, standalone 열림과 상태 표시줄, 첫 실행 로그인 상태, 하단 고정 버튼 아래 여백 `max(22px, inset)`, 바텀시트 아래 여백 `max(27px, inset)`)은 아직 하지 않았습니다.
+- 배포 후 확인: 원본 Sites 재배포 뒤 실제 Vercel 주소의 새 다섯 경로(200, Content-Type, `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff`)와 같은 경로 POST 403, https에서의 iPhone 홈 화면 추가·standalone·첫 실행 로그인·하단 여백, Android Chrome "앱 설치" 표시는 이 PR 범위 밖이라 확인하지 않았습니다.
+- 게이트웨이 검사는 전역 `fetch`를 가짜로 바꾼 함수 호출입니다. 실제 Vercel rewrite 동작과 원본 응답을 대신하지 않습니다.
+
+### 문서 대조
+
+| 항목 | 위치 |
+| --- | --- |
+| 설치 방법: Android Chrome "앱 설치" | `README.md` 38행 |
+| 설치 방법: iPhone Safari 공유 → 홈 화면에 추가 | `README.md` 39행 |
+| 제약: 기기·OS 버전에 따라 다시 로그인해야 할 수 있음 | `README.md` 43행 |
+| 제약: 초대 링크는 브라우저로 열림 | `README.md` 44행 |
+| 제약: 오프라인 불가 | `README.md` 45행 |
+| 고친 `app-logo.png` 문장 | `README.md` 162행 |
+| "코드 위치"의 새 파일 | `README.md` 95–96행 |
+| 게이트웨이가 넘기는 새 다섯 경로 | `VERCEL.md` 44행 |
+| 원본 재배포 뒤에야 응답 | `VERCEL.md` 45행 |
+
 ## 2026-11-20 에이전트 지침 AGENTS.md와 이슈 문서 추가
 
 이슈 #9. `d4d9ec5`에서 만든 `docs/agent-guidelines` 브랜치의 문서 변경(`AGENTS.md`, `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, README 범위 표기 세 줄)을 macOS에서 확인했습니다. 앱 코드·테스트·설정은 바꾸지 않았습니다.
