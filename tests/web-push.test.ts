@@ -394,7 +394,11 @@ void test('10초 안에 응답이 없으면 끊고 전송 실패로 분류한다
       }),
   );
   const pending = send({ fetch });
-  await fetchCalled;
+  // Fail instead of hanging when sending ends without ever calling fetch.
+  await Promise.race([
+    fetchCalled,
+    pending.then(() => assert.fail('fetch was never called')),
+  ]);
   t.mock.timers.tick(9_999);
   assert.equal(signal?.aborted, false);
   t.mock.timers.tick(1);
@@ -422,7 +426,10 @@ void test('서명·암호화를 기다리는 사이 10초가 지나면 보내지
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { fetch, calls } = fakeFetch(() => new Response(null, { status: 201 }));
   const pending = send({ fetch, vapid: key });
-  await started;
+  await Promise.race([
+    started,
+    pending.then(() => assert.fail('signing was never awaited')),
+  ]);
   t.mock.timers.tick(10_000);
   release();
   const { results, lines } = await pending;
