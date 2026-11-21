@@ -298,18 +298,19 @@ export async function sendPush(
         if (deadline.signal.aborted) end();
         else deadline.signal.addEventListener('abort', end, { once: true });
       });
+      const delivering = deliver(
+        subscription,
+        index,
+        options,
+        signingKey,
+        deadline.signal,
+        log,
+      );
+      // A rejection after the limit already won is not unhandled; an earlier
+      // one still reaches the catch below through the race.
+      delivering.catch(() => undefined);
       try {
-        outcome = await Promise.race([
-          deliver(
-            subscription,
-            index,
-            options,
-            signingKey,
-            deadline.signal,
-            log,
-          ).catch((): PushOutcome => ({ kind: 'transport-failure' })),
-          expired,
-        ]);
+        outcome = await Promise.race([delivering, expired]);
       } catch {
         outcome = { kind: 'transport-failure' };
       } finally {
