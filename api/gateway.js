@@ -1,4 +1,12 @@
 const upstreamOrigin = 'https://when-we-meet-yangpa.stopjung1025.chatgpt.site';
+// Home-screen app files: exact paths only, no /icons/ prefix.
+const webAppPaths = new Set([
+  '/manifest.webmanifest',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+  '/icons/apple-touch-icon.png',
+]);
 const analyticsTag = `<script async src="https://www.googletagmanager.com/gtag/js?id=G-R553VVDCZ4"></script>
 <script id="when-meet-analytics">
 window.dataLayer = window.dataLayer || [];
@@ -57,6 +65,7 @@ export async function proxy(request) {
       upstream.pathname === '/api/meeting' ||
       upstream.pathname === '/favicon.svg' ||
       upstream.pathname === '/app-logo.png' ||
+      webAppPaths.has(upstream.pathname) ||
       upstream.pathname.startsWith('/assets/') ||
       upstream.pathname.startsWith('/_next/static/')
     )

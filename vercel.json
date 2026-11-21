@@ -11,6 +11,26 @@
       "destination": "/api/gateway?path=/api/meeting"
     },
     {
+      "source": "/manifest.webmanifest",
+      "destination": "/api/gateway?path=/manifest.webmanifest"
+    },
+    {
+      "source": "/icons/icon-192.png",
+      "destination": "/api/gateway?path=/icons/icon-192.png"
+    },
+    {
+      "source": "/icons/icon-512.png",
+      "destination": "/api/gateway?path=/icons/icon-512.png"
+    },
+    {
+      "source": "/icons/icon-maskable-512.png",
+      "destination": "/api/gateway?path=/icons/icon-maskable-512.png"
+    },
+    {
+      "source": "/icons/apple-touch-icon.png",
+      "destination": "/api/gateway?path=/icons/apple-touch-icon.png"
+    },
+    {
       "source": "/_next/static/:path*",
       "destination": "https://when-we-meet-yangpa.stopjung1025.chatgpt.site/_next/static/:path*"
     },
