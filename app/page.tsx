@@ -24,6 +24,7 @@ import {
 } from '../lib/meeting-view';
 import { useKoreanToday } from '../hooks/use-korean-today';
 import { useMeetingSync } from '../hooks/use-meeting-sync';
+import { usePushNotifications } from '../hooks/use-push-notifications';
 import type { MeetingSnapshot } from '../lib/meeting-contract';
 import type { View, Sheet } from '../components/meeting/types';
 import { HomeView } from '../components/meeting/home-view';
@@ -39,6 +40,103 @@ import { RegionView } from '../components/meeting/region-view';
 import { TieView } from '../components/meeting/tie-view';
 import { FinalView } from '../components/meeting/final-view';
 import { MeetingSheets } from '../components/meeting/meeting-sheets';
+
+// "나중에" on the post-create/join notification sheet: a per-device
+// convenience record only (never sent to the server). Storage may throw.
+const pushPromptKey = 'wwm-push-prompt-later';
+function pushPromptDismissed() {
+  try {
+    return window.localStorage.getItem(pushPromptKey) === '1';
+  } catch {
+    return false;
+  }
+}
+function dismissPushPrompt() {
+  try {
+    window.localStorage.setItem(pushPromptKey, '1');
+  } catch {
+    // The sheet still closes; it may ask again on this device.
+  }
+}
+
+// The fields the room screen reads when a /?room= entry opens a room, with
+// nested types and the fields each stage needs (issue #14 T4 final review,
+// final review Spec 4). A room the home list can show may still lack them.
+// Only the entry target is checked; the full list keeps its existing checks.
+const datedStages = ['confirm', 'region', 'tie', 'final'];
+function isOpenableRoom(room: Room) {
+  const r = room as Partial<Record<keyof Room, unknown>>;
+  const strings = (value: unknown) =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string');
+  const record = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+  const recordOf = (value: unknown, item: (entry: unknown) => boolean) =>
+    record(value) && Object.values(value).every(item);
+  // A day that exists on the calendar (the screen formats and adds days).
+  const day = (value: unknown) => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+      return false;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.toISOString().slice(0, 10) === value
+    );
+  };
+  const slot = (value: unknown) =>
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}\|(점심|저녁)$/.test(value) &&
+    day(value.split('|')[0]);
+  // The saving contract: absolute http(s) URLs (the cards parse them).
+  const httpUrl = (value: unknown) => {
+    if (typeof value !== 'string') return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+  const link = (value: unknown) =>
+    record(value) &&
+    typeof value.id === 'string' &&
+    httpUrl(value.url) &&
+    typeof value.name === 'string' &&
+    (value.category === 'food' || value.category === 'cafe');
+  const stage = r.stage;
+  if (
+    typeof stage !== 'string' ||
+    !['schedule', 'date', ...datedStages, 'closed'].includes(stage)
+  )
+    return false;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.code === 'string' &&
+    typeof r.title === 'string' &&
+    typeof r.host === 'string' &&
+    day(r.start) &&
+    day(r.end) &&
+    typeof r.size === 'number' &&
+    typeof r.round === 'number' &&
+    (r.regionRevision === undefined || typeof r.regionRevision === 'number') &&
+    strings(r.members) &&
+    strings(r.attendees) &&
+    strings(r.regions) &&
+    recordOf(r.responses, strings) &&
+    recordOf(r.votes, strings) &&
+    (r.memberNames === undefined ||
+      recordOf(r.memberNames, (name) => typeof name === 'string')) &&
+    (r.confirmations === undefined ||
+      recordOf(r.confirmations, (value) => typeof value === 'boolean')) &&
+    (r.tied === undefined || strings(r.tied)) &&
+    (datedStages.includes(stage)
+      ? slot(r.date)
+      : r.date === undefined || typeof r.date === 'string') &&
+    (stage !== 'final' ||
+      (typeof r.region === 'string' &&
+        Array.isArray(r.links) &&
+        r.links.every(link)))
+  );
+}
 
 export default function Home() {
   const [signup, setSignup] = useState(false);
@@ -71,6 +169,11 @@ export default function Home() {
   const [category, setCategory] = useState<'food' | 'cafe'>('food'),
     [linkName, setLinkName] = useState('');
   const [editingSchedule, setEditingSchedule] = useState(false);
+  // Bumped on every sign-in and sign-out (push registrations belong to one).
+  const [session, setSession] = useState(0);
+  // The room whose create/join just succeeded, until the push sheet decides.
+  const [pushPromptRoom, setPushPromptRoom] = useState('');
+  const loggingOut = useRef(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const sheetInputRef = useRef<HTMLInputElement>(null);
   const appRef = useRef<HTMLDivElement>(null);
@@ -79,10 +182,22 @@ export default function Home() {
     trigger: HTMLButtonElement | undefined;
     context: string;
   } | null>(null);
+  // The first URL's /?room= entry (S3). It waits here until the first load
+  // or a sign-in returns a signed-in list.
+  const roomEntry = useRef<string | null>(null);
+  const consumeEntryRef = useRef<(snapshot: MeetingSnapshot) => boolean>(
+    () => false,
+  );
   const onInitialLoad = useCallback(
-    (snapshot: MeetingSnapshot, invite: string | null) => {
+    (
+      snapshot: MeetingSnapshot,
+      invite: string | null,
+      entry: string | null,
+    ) => {
       if (invite) setCode(invite.toUpperCase());
+      roomEntry.current = entry;
       changeView(snapshot.user ? (invite ? 'join' : 'home') : 'login');
+      if (snapshot.user) consumeEntryRef.current(snapshot);
     },
     [],
   );
@@ -112,8 +227,10 @@ export default function Home() {
     user,
     nickname,
     rooms,
+    pushPublicKey,
     busy,
     send,
+    sendAfterSave,
     replaceSession,
     clearSession,
   } = useMeetingSync({
@@ -122,6 +239,14 @@ export default function Home() {
     onPollError,
     onSaveStart,
     onSaveError,
+  });
+  const push = usePushNotifications({
+    ready: initialLoad.status === 'ready',
+    user,
+    publicKey: pushPublicKey,
+    session,
+    save: send,
+    onError: setToast,
   });
   const sheetContext = JSON.stringify([
     user,
@@ -224,6 +349,33 @@ export default function Home() {
     setCustomDate('');
     setExpandedDateContext('');
   }
+  // After a create/join success: once, only when off or unsupported, only on
+  // that room's screen, and never after "나중에" on this device. While the
+  // device is still preparing, or another sheet is open, wait (decided once,
+  // after both). Runs after the room switch above so its sheet reset does
+  // not close this sheet.
+  if (pushPromptRoom) {
+    if (view !== 'room' || active !== pushPromptRoom) setPushPromptRoom('');
+    else if (push.state !== 'preparing' && !sheet) {
+      setPushPromptRoom('');
+      if (
+        (push.state === 'off' || push.state === 'unsupported') &&
+        !pushPromptDismissed()
+      )
+        changeSheet('push');
+    }
+  }
+  // An open prompt closes once the state has no prompt (e.g. a re-sync made
+  // it on, or the key went missing); focus then follows the closing rule.
+  // ("preparing" is a lookup still running: the decision waits, it does not
+  // close the sheet.)
+  if (
+    sheet === 'push' &&
+    push.state !== 'off' &&
+    push.state !== 'unsupported' &&
+    push.state !== 'preparing'
+  )
+    changeSheet(null);
   function setRegionVotes(choices: string[]) {
     if (room)
       setRegionDraft({ context: regionVoteContext(room, user), choices });
@@ -232,18 +384,48 @@ export default function Home() {
     r.stage === 'closed' ||
     today >= (r.date ? addDays(r.date.split('|')[0], 2) : addDays(r.end, 1));
   const notify = (s: string) => setToast(s);
-  function openRoom(r: Room) {
+  function openRoom(r: Room, as = user) {
     setEditingSchedule(false);
     setActive(r.id);
-    setSelected(r.responses[user] || []);
+    setSelected(r.responses[as] || []);
     setRegionDraft(
-      reconcileRegionVoteDraft({ context: '', choices: [] }, r, user),
+      reconcileRegionVoteDraft({ context: '', choices: [] }, r, as),
     );
     setExpandedDateContext('');
     setChosen(r.start < today ? today : r.start);
     setMonth((r.start < today ? today : r.start).slice(0, 7));
     setView('room');
   }
+  // Opens the kept entry with a signed-in list: only my own room that the
+  // screen's closed/expired check allows; otherwise home and the existing
+  // toast. Returns false when no entry is kept.
+  function consumeEntry(snapshot: MeetingSnapshot) {
+    const id = roomEntry.current;
+    if (id === null || !snapshot.user) return false;
+    const target = snapshot.rooms.find((r) => r.id === id);
+    // Checked before anything changes, so a broken room never half-opens.
+    const openable =
+      !!target &&
+      isOpenableRoom(target) &&
+      target.members.includes(snapshot.user) &&
+      !expired(target);
+    roomEntry.current = null;
+    window.history.replaceState(null, '', '/');
+    if (target && openable) openRoom(target, snapshot.user);
+    else {
+      setView('home');
+      setToast('종료되었거나 더 이상 참여 중인 모임이 아니에요.');
+    }
+    return true;
+  }
+  useEffect(() => {
+    consumeEntryRef.current = consumeEntry;
+  });
+  useEffect(() => {
+    // Registration never asks for notification permission.
+    if ('serviceWorker' in navigator)
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }, []);
   async function login() {
     const data = await send(
       signup
@@ -252,8 +434,10 @@ export default function Home() {
     );
     if (!data) return;
     replaceSession(data);
+    setSession((value) => value + 1);
     setPin('');
-    setView(code ? 'join' : 'home');
+    // A kept entry decides; without one the existing rule stands.
+    if (!consumeEntry(data)) setView(code ? 'join' : 'home');
   }
   async function create() {
     const data = await send({
@@ -266,6 +450,7 @@ export default function Home() {
     });
     if (data) {
       openRoom(data.room);
+      setPushPromptRoom(data.room.id);
       setName('');
       notify('모임을 만들었어요. 친구들을 초대해 보세요.');
     }
@@ -274,6 +459,7 @@ export default function Home() {
     const data = await send({ type: 'join', code: code.trim().toUpperCase() });
     if (data) {
       openRoom(data.room);
+      setPushPromptRoom(data.room.id);
       window.history.replaceState(null, '', '/');
     }
   }
@@ -428,7 +614,20 @@ export default function Home() {
     setView('home');
   }
   async function logout() {
-    if (!(await send({ type: 'logout' }))) return;
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    try {
+      // R2 and user decision A: start dropping this device's subscription
+      // (not waited for), then send logout right away. A save already
+      // running finishes first; logout is still sent exactly once.
+      push.releaseDevice();
+      const done = await sendAfterSave({ type: 'logout' });
+      push.logoutDone();
+      if (!done) return;
+    } finally {
+      loggingOut.current = false;
+    }
+    setSession((value) => value + 1);
     clearSession();
     setView('login');
     setSheet(null);
@@ -677,6 +876,14 @@ export default function Home() {
           onCloseRoom={closeRoom}
           onLogout={logout}
           onCopyInvite={copyInvite}
+          pushState={push.state}
+          pushWorking={push.working}
+          onPushEnable={push.enable}
+          onPushDisable={push.disable}
+          onPushLater={() => {
+            dismissPushPrompt();
+            setSheet(null);
+          }}
         />
       </div>
     </>

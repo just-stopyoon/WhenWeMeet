@@ -42,7 +42,30 @@ npm run dev
 
 - 기기·OS 버전에 따라 홈 화면 앱에서 다시 로그인해야 할 수 있습니다.
 - 카카오톡 등에서 누른 초대 링크는 설치된 앱이 아니라 브라우저로 열립니다.
-- 오프라인에서는 쓸 수 없습니다. service worker가 없고 데이터는 늘 서버에서 가져옵니다.
+- 오프라인에서는 쓸 수 없습니다. service worker(`/sw.js`)는 알림 표시와 알림 클릭만 처리하고 요청 가로채기·오프라인 캐시를 하지 않으므로, 데이터는 늘 서버에서 가져옵니다.
+
+## 알림
+
+기기마다 알림을 켤 수 있습니다(Web Push). 켜 두면 자기 차례가 왔을 때와 약속 장소가 확정됐을 때 기기 알림을 받습니다. 행동한 본인은 받지 않습니다.
+
+| 순간                                                | 받는 사람      |
+| --------------------------------------------------- | -------------- |
+| 일정 마감(모두 제출해 날짜 정하기로 넘어감)         | 방장           |
+| 참석 확인 요청(방장이 후보 밖 날짜를 직접 고름)     | 방장 외 구성원 |
+| 지역 투표 시작(날짜가 정해지거나 참석 확인이 끝남)  | 참석자         |
+| 동률(지역 투표가 동률로 끝남)                       | 방장           |
+| 재투표 시작                                         | 참석자         |
+| 장소 확정(투표·추첨·탈퇴·강퇴로 최종 지역이 정해짐) | 구성원 전원    |
+
+- 날짜 다시 고르기, 링크 추가·삭제, 참가, 방장 넘기기, 모임 종료는 알리지 않습니다. 멤버가 나가거나 강퇴되어 단계가 넘어가도 같은 알림을 보냅니다.
+- 알림 제목은 방 이름, 본문은 사건과 날짜(정해져 있을 때)·지역(장소 확정 때만)입니다. 닉네임·초대 코드·아이디는 넣지 않습니다. 같은 모임의 새 알림은 이전 알림을 대체합니다.
+- 켜는 곳: 홈 우상단 프로필 버튼 → "내 계정" 시트의 "알림" 줄, 그리고 모임 만들기·참가가 성공한 직후 한 번 뜨는 바텀시트. 바텀시트에서 "나중에"를 누르면 그 기기(브라우저 저장소)에서는 다시 묻지 않습니다.
+- 켜기·끄기는 기기별입니다. 같은 계정으로 켠 기기는 모두 받고, 끄면 그 기기만 꺼집니다. 모임별로 끄는 기능은 없습니다.
+- 로그아웃하면 그 기기의 구독 해지를 시작합니다(실패해도 진행). 기기 해지는 기다리지 않습니다. 진행 중인 저장이 있으면 그 저장이 끝난 뒤 로그아웃을 요청합니다. 서버는 그 세션의 구독을 지웁니다. 로그인이 만료된 기기에도 알림이 가지 않습니다.
+- iPhone은 홈 화면에 추가한 앱에서만 알림을 켤 수 있습니다. 알림을 쓸 수 없는 브라우저에는 홈 화면 추가 안내 문구만, 권한을 거절한 기기에는 기기 설정 안내 문구만 보입니다.
+- 알림을 누르면 그 모임 화면(`/?room=<모임 id>`)이 열립니다. 앱 창이 열려 있으면 그 창을 그 주소로 이동합니다. 그 창이 아직 service worker의 제어를 받지 않아(처음 연 탭, 새로고침 전) 이동이 거절되면 새 창으로 엽니다. 이동하면 그 창에서 진행 중이던 저장 요청이 끊길 수 있습니다. 내 목록에 없거나 종료·만료된 모임이면 홈과 기존 안내 토스트를 보입니다.
+- 예약 알림(약속 전날 등)은 없습니다.
+- VAPID 키는 서버가 처음 필요할 때 만들어 D1에 보관합니다(`docs/adr/0001-vapid-key-in-d1.md`). `0002` 마이그레이션이 없거나 키를 읽지 못하면 응답에서 공개 키만 빠지고 알림 UI가 숨겨집니다.
 
 ## 구현 범위
 
@@ -57,7 +80,7 @@ npm run dev
 
 ## 실제 서비스와의 차이
 
-이메일 발송과 네이버 정보 자동 완성은 미구현입니다. 이메일 입력창도 숨겼습니다. PIN 복구는 지원하지 않습니다. 4자리 PIN은 사용자 요청에 따른 간편 인증이며, 높은 보안 수준을 요구하는 개인정보를 저장하는 용도로 설계하지 않았습니다.
+이메일 발송과 네이버 정보 자동 완성은 미구현입니다. 알림은 즉시 알림만 있고 예약 알림·모임별 끄기는 없습니다(위 "알림"). 이메일 입력창도 숨겼습니다. PIN 복구는 지원하지 않습니다. 4자리 PIN은 사용자 요청에 따른 간편 인증이며, 높은 보안 수준을 요구하는 개인정보를 저장하는 용도로 설계하지 않았습니다.
 
 날짜는 한국 시간 기준입니다. 약속일 다다음날 00:00부터 접근할 수 없으며 이후 첫 API 요청에서 만료된 방을 삭제합니다. 무접속 상태에서 정확히 00:00에 물리 삭제하는 예약 작업은 아직 없습니다. 개발 DB는 `.wrangler` 아래 로컬 저장소로, 배포 DB와 분리됩니다. `drizzle/0000_shared_rooms.sql`은 배포용 초기 스키마이며 로컬 API도 동일 테이블을 준비합니다.
 
@@ -82,12 +105,22 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 ## 코드 위치
 
 - `app/page.tsx`: 화면 조합·입력 초안·명시적 액션 호출·성공 후 이동·오류/토스트·시트 포커스
-- `components/meeting/`: 홈·로그인·생성·참가 화면, 모임 단계별 화면과 공통 표시 요소. `meeting-sheets.tsx`는 공통 dialog와 여섯 종류의 시트 내용을 담당
-- `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·저장 중 상태와 `pending`/`generation` 동시성 제어
+- `components/meeting/`: 홈·로그인·생성·참가 화면, 모임 단계별 화면과 공통 표시 요소. `meeting-sheets.tsx`는 공통 dialog와 일곱 종류의 시트 내용(성공 직후 알림 바텀시트, "내 계정"의 "알림" 줄 포함)을 담당
+- `hooks/use-meeting-sync.ts`: 초기 조회·4초 폴링·서버의 사용자/모임 상태·알림 공개 키·저장 중 상태와 `pending`/`generation` 동시성 제어. 첫 URL의 `?join=`·`?room=` 진입 값을 한 번 읽어 보관
+- `hooks/use-push-notifications.ts`: 이 기기의 알림 상태 판정(확인 전·키 없음·미지원·거절·준비 중·켜짐·꺼짐), 켜기·끄기, 로그아웃 전 기기 구독 해지, 계정·세션이 바뀔 때마다 endpoint당 한 번의 다시 맞추기. 기기·서버 작업의 결과는 그 작업을 시작한 계정 세대가 지금도 현재일 때만 반영
+- `public/sw.js`: service worker. `push`(알림 표시)와 `notificationclick`(열린 창 이동 또는 새 창)만 처리
 - `components/meeting/connection-view.tsx`: 초기 연결 로딩·오류·수동 재시도 화면
 - `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
 - `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리. 다른 출처 POST는 거절하기 전에 `lib/discard-body.ts`로 본문을 64KiB·1초 상한 안에서 읽어 버림
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
+- `lib/room-save.ts`: 모임 수정의 저장 루프(버전 조건부 UPDATE 최대 8회)와 성공한 시도 한 번의 알림 발송 예약
+- `lib/push-notices.ts`: 단계 전환별 받는 사람과 알림 제목·본문·여는 주소를 정하는 순수 함수
+- `lib/push-dispatch.ts`: 예약된 발송. 받는 계정의 유효한 구독을 골라 보내고 404·410 구독을 정리
+- `lib/web-push.ts`: Web Push 발송(RFC 8291 `aes128gcm` 암호화·RFC 8292 VAPID 서명·리디렉션 금지·제한 시간·결과 분류)
+- `lib/vapid-keys.ts`: VAPID 키 쌍 생성·보관(저장소 주입)
+- `lib/push-subscription.ts`: 구독 검사(알려진 푸시 서비스 호스트·키 길이·P-256 점)와 base64url 도우미
+- `lib/push-store.ts`: 구독·VAPID 키의 D1 저장(소유권 이동 규칙, 세션 연쇄 삭제)
+- `drizzle/0002_push_subscriptions.sql`: 구독 테이블과 VAPID 키 테이블
 - `lib/meeting-contract.ts`: 화면·서버·테스트가 공유하는 액션별 요청과 응답 타입
 - `app/globals.css`: 디자인 토큰과 모바일 스타일
 - `lib/meeting.ts`: 데이터 모델·날짜/지역 집계
@@ -128,7 +161,7 @@ npm run test:e2e
 | `npm run lint`       | `oxlint app api components hooks lib`: 앱·게이트웨이·화면·훅·공통 로직 |
 | `npm run lint:tests` | `oxlint tests`: 테스트 코드                                            |
 | `npm run lint:all`   | `oxlint .`: 위 범위와 스크립트·설정 파일을 포함한 저장소 전체          |
-| `npm test`           | Node 내장 러너의 단위 테스트 42개                                      |
+| `npm test`           | Node 내장 러너의 단위 테스트 135개                                     |
 | `npm run test:api`   | 실제 로컬 HTTP·Workers·D1의 인증·권한·상태 전환·동시 저장              |
 | `npm run test:e2e`   | Chromium 360px·430px의 실제 사용자 흐름 및 별도 UI 시계·응답 순서 검사 |
 | `npm run test:all`   | 단위·API·브라우저 전체, 앱 빌드 한 번                                  |
@@ -138,6 +171,8 @@ npm run test:e2e
 `initial-connection-mocked.spec.ts`는 초기 네트워크·HTTP·JSON 오류, 30초 제한, 취소를 무시한 지연 응답, 중복 재시도와 로그인/회원가입 후 초대 보존을 모의 응답으로 검사합니다. `initial-connection.spec.ts`는 첫 조회 실패만 주입한 뒤 실제 로컬 Workers/D1로 기존 세션·로그인·회원가입 및 참가 저장을 검사하며, 참가 실패 시 코드·URL 유지와 성공 후 새로고침도 확인합니다. 두 화면 크기의 오류·재시도·초대 코드 보존 캡처는 `outputs/verification/initial-connection-retry/`와 Playwright 첨부 자료에 저장합니다.
 
 `test:api`의 `webapp.spec.ts`는 테스트 서버의 HTML `<head>`가 가리키는 앱 정보·아이콘과 실제 응답(PNG 크기 포함)을 대조합니다. `gateway.spec.ts`는 전역 `fetch`를 가짜로 바꿔 네트워크 없이 `api/gateway.js`의 `proxy()`를 부르고, `vercel.json`의 새 rewrite 다섯 쌍과 게이트웨이 허용 경로가 맞는지 검사합니다. 실제 Vercel 배포를 대신하지 않습니다.
+
+알림 검사는 단위(`tests/web-push.test.ts`·`push-notices.test.ts`·`push-store.test.ts`·`push-dispatch.test.ts`), API(`tests/api/push.spec.ts`·`push-dispatch.spec.ts`·`service-worker.spec.ts`), 브라우저(`tests/e2e/push-ui.spec.ts`·`service-worker.spec.ts`·`room-entry.spec.ts`)에 있습니다. 테스트 서버는 발송 차단 설정(`WHENWEMEET_PUSH_SEND_BLOCKED`)으로 떠서 실제 푸시 서비스로 요청을 보내지 않고, 서명·암호화를 마친 시도마다 호스트 종류만 담은 `WEB_PUSH_BLOCKED_ATTEMPT` 한 줄을 `test-artifacts/server.log`에 남깁니다. 헤드리스 Chromium은 알림 권한이 늘 거절이고 실제 구독이 실패하므로, `push-ui.spec.ts`는 페이지 시작 전 스크립트로 `Notification.permission`·`PushManager`·service worker 등록을 모의로 바꾸고 서버는 실제 API/D1과 그 파일의 전용 계정을 씁니다. 공유 계정 3개에는 구독을 등록하지 않습니다.
 
 API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mjs`를 실행합니다. 앱을 빌드한 뒤 **127.0.0.1:4317**에서 로컬 Wrangler를 시작하고, 실행마다 만든 OS 임시 디렉터리에 D1을 저장합니다. 포트가 사용 중이면 실패하며 기존 서버를 재사용하거나 종료하지 않습니다. 실행기 자식의 준비 신호와 `/api/meeting` 응답을 확인한 후 테스트를 시작합니다. 정상 종료·테스트 실패·Ctrl+C에서는 해당 프로세스와 임시 D1을 정리합니다. 평소 쓰는 `.wrangler/`와 개발 서버는 유지합니다. macOS와 Ubuntu에서 사용하는 프로세스 종료 방식입니다.
 
@@ -161,11 +196,17 @@ API·브라우저 명령은 Playwright의 `webServer`로 `scripts/test-server.mj
 - Pretendard v1.3.9, 행간 150%, 자간 -0.025em. 타이틀 700 / 소제목·버튼 600 / 본문·placeholder 500 / 입력값 600.
 - public/app-logo.png는 사용자가 제공한 로고이며 로그인 화면, 상단 브랜드, 브라우저 탭 아이콘에 사용합니다. 홈 화면 아이콘은 이 로고로 만든 `public/icons/`의 아이콘을 씁니다.
 
-신규 DB와 로컬 미리보기에는 기존 SQL에 이어 `drizzle/0001_account_profiles.sql`을 적용해야 합니다. Sites는 배포 시 추가 마이그레이션을 적용합니다. 로컬 빌드 후에는 다음과 같이 적용합니다(운영 DB 옵션을 사용하지 않습니다).
+신규 DB와 로컬 미리보기에는 기존 SQL에 이어 `drizzle/0001_account_profiles.sql`과 `drizzle/0002_push_subscriptions.sql`을 적용해야 합니다. Sites는 배포 시 추가 마이그레이션을 적용합니다. 로컬 빌드 후에는 다음과 같이 적용합니다(운영 DB 옵션을 사용하지 않습니다).
 
 ```sh
 npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0000_shared_rooms.sql
 npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0001_account_profiles.sql
+npx wrangler d1 execute DB --local --config dist/server/wrangler.json --file drizzle/0002_push_subscriptions.sql
 ```
 
-`npm run test:all`은 별도 임시 D1에 마이그레이션을 적용합니다. 이메일 및 푸시 알림은 이 변경에 포함하지 않습니다.
+`0002`는 알림 구독 테이블과 VAPID 키 테이블만 새로 만들므로, 이미 쓰던 로컬 D1에 적용해도 기존 계정·모임은 그대로 남습니다. 적용하지 않은 D1에서도 조회·로그인·회원가입은 지금처럼 동작하지만, 응답에 알림 공개 키(`pushPublicKey`)가 빠져 알림 UI가 숨겨집니다. 키 행이 손상되거나 잠시 읽지 못할 때도 같은 필드가 빠지므로, 두 가지를 따로 확인합니다.
+
+- 마이그레이션 적용: `npx wrangler d1 execute DB --local --config dist/server/wrangler.json --command "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('push_subscriptions','push_vapid_keys')"` 결과에 두 테이블이 있는지 봅니다.
+- 알림 키 사용 가능: 로그인한 상태의 `/api/meeting` GET 응답에 `pushPublicKey`가 있는지 봅니다.
+
+`npm run test:all`은 별도 임시 D1에 마이그레이션을 적용합니다. 이메일 알림은 이 변경에 포함하지 않습니다. 푸시 알림은 위 "알림" 절을 봅니다.

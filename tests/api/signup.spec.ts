@@ -38,6 +38,7 @@ test('가입과 로그인을 분리하고 중복 닉네임·동일 PIN 계정의
       user: id,
       nickname: '같은 친구',
       rooms: [],
+      pushPublicKey: expect.any(String),
     });
     await expectError(
       await second.post('/api/meeting', { data: signup }),

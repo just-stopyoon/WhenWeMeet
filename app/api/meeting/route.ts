@@ -1,19 +1,37 @@
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { newRoom, daysBetween, type Room } from '../../../lib/meeting';
 import type {
   MeetingError,
   MeetingResponse,
   MeetingSnapshot,
 } from '../../../lib/meeting-contract';
+import { dispatchPushNotices } from '../../../lib/push-dispatch';
 import {
-  applyAction,
+  d1VapidKeyStore,
+  removePushSubscription,
+  savePushSubscription,
+} from '../../../lib/push-store';
+import {
+  checkPushEndpoint,
+  checkPushSubscription,
+} from '../../../lib/push-subscription';
+import {
   expiresOn,
   koreanToday,
   type UnvalidatedAction,
 } from '../../../lib/room-actions';
 import { discardBody } from '../../../lib/discard-body';
+import {
+  roomSaveConflict,
+  saveRoomAction,
+  type RoomRow,
+} from '../../../lib/room-save';
+import { withPushPublicKey } from '../../../lib/vapid-keys';
+import { isPushSendBlocked } from '../../../lib/web-push';
 
 const db = () => (env as unknown as { DB: D1Database }).DB;
+// Must not reference the Web Push tables (drizzle/0002): a database without
+// them keeps working, and deleting a session cascades to its subscriptions.
 async function initialize() {
   await db().batch([
     db().prepare(
@@ -35,6 +53,7 @@ async function initialize() {
     db().prepare('DELETE FROM attempts WHERE expires < ?').bind(Date.now()),
   ]);
 }
+const pushInvalid = '알림 구독 정보를 확인해 주세요.';
 const reply = (
   data: MeetingSnapshot | MeetingResponse | MeetingError,
   status = 200,
@@ -139,7 +158,14 @@ export async function GET(req: Request) {
     const user = await currentUser(req);
     return reply(
       user
-        ? { user, nickname: await nicknameFor(user), rooms: await list(user) }
+        ? await withPushPublicKey(
+            {
+              user,
+              nickname: await nicknameFor(user),
+              rooms: await list(user),
+            },
+            d1VapidKeyStore(db()),
+          )
         : { user: '', rooms: [] },
     );
   } catch {
@@ -224,11 +250,14 @@ export async function POST(req: Request) {
         .bind(await digest(token), name, Date.now() + 30 * 86400000)
         .run();
       return reply(
-        {
-          user: name,
-          nickname: await nicknameFor(name),
-          rooms: await list(name),
-        },
+        await withPushPublicKey(
+          {
+            user: name,
+            nickname: await nicknameFor(name),
+            rooms: await list(name),
+          },
+          d1VapidKeyStore(db()),
+        ),
         200,
         {
           'Set-Cookie': cookie(req, token, 30 * 86400),
@@ -245,6 +274,27 @@ export async function POST(req: Request) {
       return reply({}, 200, { 'Set-Cookie': cookie(req, '', 0) });
     }
     await limit('action:' + user, 300);
+    if (a.type === 'pushSubscribe') {
+      const subscription = await checkPushSubscription(a.subscription);
+      if (!subscription) return reply({ error: pushInvalid }, 400);
+      const saved = await savePushSubscription(
+        db(),
+        await digest(cookieToken(req)),
+        subscription,
+      );
+      if (saved === 'session-ended')
+        return reply({ error: '다시 로그인해 주세요.' }, 401);
+      if (saved === 'owned-elsewhere')
+        return reply({ error: pushInvalid }, 400);
+      return reply({});
+    }
+    if (a.type === 'pushUnsubscribe') {
+      const endpoint = checkPushEndpoint(a.endpoint);
+      if (!endpoint) return reply({ error: pushInvalid }, 400);
+      return reply({
+        removed: await removePushSubscription(db(), user, endpoint),
+      });
+    }
     if (a.type === 'create') {
       if (
         typeof a.title !== 'string' ||
@@ -284,37 +334,50 @@ export async function POST(req: Request) {
         .run();
       return reply({ room: await withNames(r) });
     }
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const row =
-        a.type === 'join'
-          ? await db()
-              .prepare('SELECT id,data,version FROM rooms WHERE code=?')
-              .bind(String(a.code).trim().toUpperCase())
-              .first<{ id: string; data: string; version: number }>()
-          : await db()
-              .prepare('SELECT id,data,version FROM rooms WHERE id=?')
-              .bind(String(a.roomId))
-              .first<{ id: string; data: string; version: number }>();
-      if (!row)
-        throw new Error('모임을 찾을 수 없어요. 초대 코드를 확인해 주세요.');
-      const updated = applyAction(JSON.parse(row.data), user, a);
-      const result = await db()
-        .prepare(
-          'UPDATE rooms SET data=?,version=version+1,expires=? WHERE id=? AND version=?',
-        )
-        .bind(JSON.stringify(updated), expiresOn(updated), row.id, row.version)
-        .run();
-      if (result.meta.changes)
-        return reply({
-          room: updated.members.includes(user)
-            ? await withNames(updated)
-            : null,
-        });
-    }
-    return reply(
-      { error: '다른 친구가 제출 중이에요. 한 번 더 시도해 주세요.' },
-      409,
+    const saved = await saveRoomAction(
+      {
+        read: () =>
+          a.type === 'join'
+            ? db()
+                .prepare('SELECT id,data,version FROM rooms WHERE code=?')
+                .bind(String(a.code).trim().toUpperCase())
+                .first<RoomRow>()
+            : db()
+                .prepare('SELECT id,data,version FROM rooms WHERE id=?')
+                .bind(String(a.roomId))
+                .first<RoomRow>(),
+        update: async (row, updated) =>
+          (
+            await db()
+              .prepare(
+                'UPDATE rooms SET data=?,version=version+1,expires=? WHERE id=? AND version=?',
+              )
+              .bind(
+                JSON.stringify(updated),
+                expiresOn(updated),
+                row.id,
+                row.version,
+              )
+              .run()
+          ).meta.changes > 0,
+        dispatch: (notices) =>
+          dispatchPushNotices(notices, {
+            db: db(),
+            vapid: d1VapidKeyStore(db()),
+            // Bound call: Workers' fetch rejects a foreign `this`.
+            fetch: (input, init) => fetch(input, init),
+            blocked: isPushSendBlocked(env),
+          }),
+        schedule: waitUntil,
+      },
+      user,
+      a,
     );
+    if (saved)
+      return reply({
+        room: saved.members.includes(user) ? await withNames(saved) : null,
+      });
+    return reply(roomSaveConflict.body, roomSaveConflict.status);
   } catch (error) {
     return reply(
       {
