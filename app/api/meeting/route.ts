@@ -20,6 +20,7 @@ import {
   koreanToday,
   type UnvalidatedAction,
 } from '../../../lib/room-actions';
+import { discardBody } from '../../../lib/discard-body';
 import {
   roomSaveConflict,
   saveRoomAction,
@@ -176,8 +177,11 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   try {
-    if (req.headers.get('origin') !== new URL(req.url).origin)
+    if (req.headers.get('origin') !== new URL(req.url).origin) {
+      // Bounded drain of the rejected body; see lib/discard-body.ts (#13).
+      await discardBody(req);
       return reply({ error: '허용되지 않은 요청이에요.' }, 403);
+    }
     const raw = await req.text();
     if (raw.length > 20000) return reply({ error: '요청이 너무 커요.' }, 413);
     // This property bag is not a validated MeetingRequest. Preserve the runtime

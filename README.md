@@ -111,7 +111,7 @@ TDS의 명확한 위계, 블루 액션, 중립색, 넓은 여백과 모바일 �
 - `public/sw.js`: service worker. `push`(알림 표시)와 `notificationclick`(열린 창 이동 또는 새 창)만 처리
 - `components/meeting/connection-view.tsx`: 초기 연결 로딩·오류·수동 재시도 화면
 - `lib/meeting-api.ts`: 공통 계약을 사용하는 GET/POST·JSON 파싱·HTTP 오류 변환
-- `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리
+- `app/api/meeting/route.ts`: 인증·세션·D1 저장·동시 업데이트 처리. 다른 출처 POST는 거절하기 전에 `lib/discard-body.ts`로 본문을 64KiB·1초 상한 안에서 읽어 버림
 - `lib/room-actions.ts`: 서버에서 실행하는 권한 및 투표 상태 전환
 - `lib/room-save.ts`: 모임 수정의 저장 루프(버전 조건부 UPDATE 최대 8회)와 성공한 시도 한 번의 알림 발송 예약
 - `lib/push-notices.ts`: 단계 전환별 받는 사람과 알림 제목·본문·여는 주소를 정하는 순수 함수
