@@ -14,6 +14,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
+  // Pin the values @cloudflare/vite-plugin 1.37.1 produced (issue #16). Newer
+  // plugin versions default to their own release date and emit source maps.
+  compatibility_date: '2026-05-15',
+  upload_source_maps: false,
   compatibility_flags: ['nodejs_compat'],
   d1_databases: d1
     ? [

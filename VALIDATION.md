@@ -1,5 +1,71 @@
 # API·브라우저 자동 테스트 검증 기록
 
+## 2026-11-22 wrangler 4.166.0 업그레이드
+
+이슈 #16. 시작 커밋 `649a8fd`에서 만든 `chore/upgrade-wrangler` 브랜치의 `453156a`(의존성 업그레이드)와 `b68d9f3`(배포 설정 고정)을 macOS, Node 24.3.0, npm 11.4.2, Playwright 1.63.0에서 확인했습니다. 모두 로컬 결과이며 원격 CI·Vercel 게이트웨이·운영 Workers·실제 배포 검증이 아닙니다. 아래 "설정 변경 작업 트리"는 `453156a`에 `vite.config.ts` 변경(커밋 전, 뒤에 `b68d9f3`으로 커밋)을 얹은 상태입니다. 전체 검증만 `b68d9f3` 깨끗한 트리에서 돌렸습니다.
+
+### 바꾼 것
+
+| 패키지 | 전 | 후 |
+| --- | --- | --- |
+| `wrangler` | 4.92.0 | 4.166.0 |
+| `@cloudflare/workers-types` | 4.20260515.1 | 5.20261121.1 |
+| `@cloudflare/vite-plugin` | 1.37.1 | 1.70.1 |
+
+- `wrangler` 4.166.0은 `@cloudflare/workers-types` ^5를 peer로 요구합니다. 4.x를 두면 npm이 설치를 거절합니다(ERESOLVE).
+- 플러그인을 1.37.1로 두고 위 둘만 올리는 조합도 시험했습니다. 설치·타입 검사·빌드는 되고 빌드 산출물도 `649a8fd`와 같았습니다. 하지만 플러그인 1.37.1이 `dist/server/wrangler.json`에 쓰는 `legacy_env: true`를 `wrangler` 4.166.0이 `The "legacy_env" field is no longer supported` 오류로 거절해, 테스트 서버의 `wrangler d1 execute`와 `npm run start`가 뜨지 않았습니다. 공식 릴리스 기준으로 `legacy_env` 제거는 [`wrangler` 4.111.0](https://github.com/cloudflare/workers-sdk/releases/tag/wrangler@4.111.0), 끊긴 GET·HEAD 자동 재시도는 [4.129.1](https://github.com/cloudflare/workers-sdk/releases/tag/wrangler@4.129.1)입니다. [4.114.0](https://github.com/cloudflare/workers-sdk/releases/tag/wrangler@4.114.0)부터 자동 리다이렉트로 읽은 설정에는 예외가 있지만, 이 저장소는 `--config dist/server/wrangler.json`으로 설정을 명시하므로 이 경로에서는 둘을 같이 만족하는 버전이 없습니다. 패키지 문구 조사(npm 배포본 표본)로는 거절 문구가 4.110.0에 없고 4.115.0에 있었고, 재시도 코드는 4.125.0에 없고 4.130.0에 있었습니다. 실제로 실행한 버전은 4.92.0과 4.166.0뿐입니다.
+- 플러그인 1.70.1은 지정이 없으면 `compatibility_date`를 자기 기본값(2026-11-17)으로, `upload_source_maps`를 true로 내보내고 서버 소스맵을 만듭니다. `vite.config.ts`의 `localBindingConfig`에 `compatibility_date: '2026-05-15'`와 `upload_source_maps: false`를 적어 이전 값을 고정했습니다. 앱 코드·테스트는 바꾸지 않았습니다.
+
+### 실행한 검사
+
+| 조건 | 명령 | 결과 |
+| --- | --- | --- |
+| 전체 검증 | `npm run typecheck` → `npm run lint:all` → `npm run test:all` (`b68d9f3`) | 셋 다 exit 0. 단위 50개 통과, Playwright 136개 통과(2.2분) |
+| 빌드 산출물 비교 | `649a8fd` 임시 워크트리(`npm ci`)와 설정 변경 작업 트리에서 각각 `npm run build`, `dist/server/wrangler.json`·서버 `.map` 수 비교 | 아래 표의 차이만 있음. 변형(차이를 하나도 허용하지 않는 비교, 같은 작업 트리)은 exit 1 |
+| 로컬 실행 | 설정 변경 작업 트리에서 `npm run build` → `npm run start` 뒤 `GET /`·`/api/meeting`·`/sw.js` | 2초 안에 응답. `/` 200, `/api/meeting` 200(`{"user":"","rooms":[]}`), `/sw.js` 404(`649a8fd`에 파일 없음). `.openai/hosting.json` `d1`은 `DB`, `vite.config.ts`의 `binding: d1`, 산출물 D1 바인딩 `DB` |
+| 공백 | `git diff --check origin/main...HEAD` | 통과 |
+
+빌드 산출물(`dist/server/wrangler.json`) 차이:
+
+| 항목 | `649a8fd` 빌드 | 설정 변경 작업 트리 빌드 |
+| --- | --- | --- |
+| `compatibility_date` | 2026-05-15 | 2026-05-15 |
+| `compatibility_flags`, `main`, `assets`, D1 `binding`·`database_name`·`database_id` | | 같음 |
+| 서버 `.map` 파일 | 0개 | 0개 |
+| `upload_source_maps` | 없음 | `false` |
+| D1 `migrations_dir` | 없음 | `../../migrations` |
+| `legacy_env` | `true` | 없음 |
+| `agent_memory`, `connect`, `k2` / `exports` | 없음 | 빈 배열 / 빈 객체 |
+
+### 업그레이드 전·후 재현
+
+`scripts/test-server.mjs`(4317 포트, 임시 D1)를 띄우고, 다른 출처 POST(70000B, #13의 64KiB 상한을 넘김) 뒤 정적 청크(`layout-segment-context-*.js`)를 GET했습니다. 2.5초 안에 끝나지 않으면 "멈춤"으로 세고 다른 요청을 하나 보냈습니다. 같은 POST 뒤 같은 출처 POST(빈 닉네임 로그인, 정상이면 400)의 상태도 셌습니다. 각 20회입니다. 전은 `649a8fd` 임시 워크트리, 후는 설정 변경 작업 트리입니다.
+
+| 측정 | 전 (4.92.0) | 후 (4.166.0) |
+| --- | --- | --- |
+| 청크 GET 멈춤 | 20/20 (2510–2523ms, 다른 요청 뒤에야 200) | 0/20 (2–5ms, 모두 200) |
+| 다음 같은 출처 POST | 503 20/20 ("Your worker restarted mid-request…") | 400 20/20 |
+
+판정 변형(멈춤 기준 1ms)은 더 이른 상태(`649a8fd`에 `package.json`·`package-lock.json` 업그레이드만 얹은 작업 트리, 4.166.0)에서 돌렸고 5/5를 멈춤으로 세어 exit 1이었습니다.
+
+### npm audit
+
+| lock | 결과 |
+| --- | --- |
+| `649a8fd` | 17건(낮음 1·중간 3·높음 10·치명 3) |
+| 플러그인 1.37.1 유지 조합(쓰지 않음) | 17건(낮음 1·중간 5·높음 8·치명 3) |
+| `b68d9f3` | 10건(중간 3·높음 4·치명 3) |
+
+남은 10건은 vite, react-server-dom-webpack, tinypool 등 이번 범위 밖 패키지입니다.
+
+### 미검증과 남은 위험
+
+- 원격 PR CI(Linux)와 Linux에서의 재현율은 확인하지 않았습니다.
+- 산출물에 새로 생긴 D1 `migrations_dir`, 명시된 `upload_source_maps: false`, 빈 필드가 Sites 배포에 영향이 없는지는 실제 배포로 확인하지 않았습니다. 운영·Vercel 게이트웨이도 보지 않았습니다.
+- 업그레이드 후 재현에서 연결이 끊겼다가 재시도로 풀린 것인지, 처음부터 끊기지 않은 것인지는 계측하지 않아 구분하지 못했습니다.
+- 4.92.0에서 관찰된 "연결이 끊긴 직후 `/` GET이면 wrangler 종료"는 다시 재지 않았습니다.
+- 플러그인 안에 `wrangler` 4.164.0이 따로 설치됩니다. Vite 플러그인은 내부 4.164.0을 쓰고(빌드와 `npm run dev`의 Vite 개발 서버), `npm run start`·테스트 서버 CLI는 루트 4.166.0을 실행합니다.
+
 ## 2026-11-22 다른 출처 POST 거절 전 요청 본문 비우기
 
 이슈 #13. 시작 커밋 `2643cce`에서 만든 `fix/cross-origin-body-drain` 브랜치에서 `6eee327`(첫 구현), `8ae779d`(검수 반영: 상한 스트림 읽기), `ec668ff`(재검수 반영: BYOB 정확 상한·reader 해제), `dc26cc5`(상한 테스트 보강)를 macOS, Node 24.3.0, Playwright 1.63.0에서 확인했습니다. 모두 로컬 결과이며 원격 CI·Vercel 게이트웨이·운영 Workers 검증이 아닙니다. 아래 "작업 트리"는 표시한 커밋에 커밋 전 변경을 얹은 상태입니다.
