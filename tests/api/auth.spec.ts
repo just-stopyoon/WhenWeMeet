@@ -129,6 +129,28 @@ test('동일 출처, 요청 크기, 생성 입력 검증을 유지한다', async
   await listRooms(host);
 });
 
+test('본문이 큰 다른 출처 요청을 거절한 뒤에도 다음 요청이 처리된다', async ({
+  accounts,
+}) => {
+  // Issue #13: an unread 403 body made the next request on the same local
+  // wrangler dev connection fail with 503 (about 399/400 at 5000B and up).
+  const [host] = accounts;
+  for (let i = 0; i < 20; i++) {
+    await expectError(
+      await host.request.post('/api/meeting', {
+        headers: { Origin: 'http://untrusted.invalid' },
+        data: { type: 'logout', padding: 'x'.repeat(5000) },
+      }),
+      403,
+    );
+    await expectError(
+      await host.request.post('/api/meeting', { data: 'x'.repeat(20001) }),
+      413,
+    );
+  }
+  await listRooms(host);
+});
+
 test('참가 전 방 목록과 변경 권한은 계정별로 격리된다', async ({
   accounts,
 }) => {
